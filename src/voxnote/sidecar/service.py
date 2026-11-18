@@ -329,17 +329,20 @@ class SidecarService:
         file_path: str | None = None,
         model_id: str | None = None,
         device_preference: str | None = None,
+        device: str | None = None,
         dictionary_id: str | None = None,
     ) -> dict[str, Any]:
         if self._is_busy():
             raise SidecarServiceError(BUSY_ERROR, "Транскрибация или загрузка уже выполняется.")
 
+        effective_device = device_preference or device
+
         # Update params if explicitly provided
         settings_update: dict[str, Any] = {}
         if model_id is not None:
             settings_update["selected_model"] = model_id
-        if device_preference is not None:
-            settings_update["device_preference"] = device_preference
+        if effective_device is not None:
+            settings_update["device_preference"] = effective_device
         if dictionary_id is not None:
             effective_dict = None if dictionary_id == NONE_ID else dictionary_id
             settings_update["selected_dictionary"] = effective_dict

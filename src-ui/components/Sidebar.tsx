@@ -148,40 +148,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* Bottom: Onboarding Guide & Settings buttons */}
-      <div className="p-3 border-t border-brand-border/60 dark:border-dark-border/60 flex items-center gap-1">
-        <button
-          onClick={onOpenOnboarding}
-          className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors cursor-pointer truncate"
-          title="Вступительная инструкция: что и где устроено в VoxNote"
-        >
-          <HelpCircle size={14} className="shrink-0" />
-          <span className="truncate">Инструкция</span>
-        </button>
+      {/* Bottom: Onboarding Guide, Settings & Updates buttons */}
+      <div className="p-3 border-t border-brand-border/60 dark:border-dark-border/60 space-y-1">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={onOpenOnboarding}
+            className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+            title="Вступительная инструкция: что и где устроено в VoxNote"
+          >
+            <HelpCircle size={14} className="shrink-0" />
+            <span>Инструкция</span>
+          </button>
 
-        <button
-          onClick={onOpenSettings}
-          className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors cursor-pointer truncate"
-          title="Настройки моделей и словарей"
-        >
-          <Settings size={14} className="shrink-0" />
-          <span className="truncate">Настройки</span>
-        </button>
+          <button
+            onClick={onOpenSettings}
+            className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+            title="Настройки моделей и словарей"
+          >
+            <Settings size={14} className="shrink-0" />
+            <span>Настройки</span>
+          </button>
+        </div>
 
         {onOpenUpdates && (
           <button
             onClick={onOpenUpdates}
-            className={`relative p-1.5 rounded-lg transition-colors cursor-pointer shrink-0 ${
+            className={`w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
               isUpdateAvailable
-                ? "bg-brand-primary text-white hover:bg-brand-primary-hover shadow-subtle"
+                ? "bg-brand-primary text-white hover:bg-brand-primary-hover shadow-subtle animate-pulse"
                 : "text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5"
             }`}
-            title={isUpdateAvailable ? "Доступно обновление VoxNote!" : "Проверить обновления на GitHub"}
+            title="Проверить наличие обновлений VoxNote на GitHub"
           >
-            <Sparkles size={14} />
-            {isUpdateAvailable && (
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-brand-accent animate-ping" />
-            )}
+            <Sparkles size={14} className={isUpdateAvailable ? "text-white" : "text-brand-primary"} />
+            <span>{isUpdateAvailable ? "Доступно обновление!" : "Проверить обновления"}</span>
           </button>
         )}
       </div>

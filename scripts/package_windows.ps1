@@ -17,7 +17,7 @@ $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 pnpm tauri build
 
 Write-Host "=== Step 5: Create Portable ZIP distribution and collect artifacts ===" -ForegroundColor Cyan
-$version = "0.1.1"
+$version = "0.1.2"
 $releaseDir = "src-tauri\target\release"
 $artifactsDir = "release-artifacts"
 $portableDir = "$artifactsDir\VoxNote-$version-Portable"

@@ -96,14 +96,18 @@ export const TopBar: React.FC<TopBarProps> = ({
           <Info size={15} />
         </button>
 
-        {isUpdateAvailable && onOpenUpdates && (
+        {onOpenUpdates && (
           <button
             onClick={onOpenUpdates}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-primary text-white text-xs font-semibold shadow-subtle hover:bg-brand-primary-hover transition-all cursor-pointer animate-pulse"
-            title="Доступно новое обновление VoxNote! Нажмите для просмотра"
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors cursor-pointer shadow-subtle shrink-0 ${
+              isUpdateAvailable
+                ? "bg-brand-primary text-white border-brand-primary animate-pulse shadow-subtle"
+                : "border-brand-border dark:border-dark-border bg-brand-surface dark:bg-dark-surface hover:bg-black/5 dark:hover:bg-white/5 text-brand-text dark:text-dark-text"
+            }`}
+            title="Проверить обновления VoxNote"
           >
-            <Sparkles size={13} />
-            <span>Обновление!</span>
+            <Sparkles size={13} className={isUpdateAvailable ? "text-white" : "text-brand-primary"} />
+            <span className="hidden sm:inline">{isUpdateAvailable ? "Обновление!" : "Обновления"}</span>
           </button>
         )}
 

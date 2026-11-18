@@ -324,6 +324,27 @@ def test_sidecar_transcription_full_lifecycle(temp_environment: dict[str, Any]) 
     assert len(history["entries"][0]["segments"]) == 2
 
 
+def test_sidecar_transcription_accepts_device_parameter(temp_environment: dict[str, Any]) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda p, pref: FakePreparedService(),
+        audio_service=temp_environment["audio_service"],
+        event_sink=lambda m, p: events.append((m, p)),
+    )
+    res = service.start_transcription(
+        file_path=str(temp_environment["audio_file"]),
+        model_id="small",
+        device="cpu",
+        dictionary_id=None,
+    )
+    assert res["status"] == "started"
+    if service._transcription_task is not None:
+        service._transcription_task.future.result(timeout=3.0)
+    assert len([e for e in events if e[0] == "transcription_completed"]) == 1
+
+
 def test_sidecar_transcription_error_and_retry(temp_environment: dict[str, Any]) -> None:
     events: list[tuple[str, dict[str, Any]]] = []
     service = SidecarService(

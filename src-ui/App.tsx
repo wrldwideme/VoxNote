@@ -21,7 +21,7 @@ import {
 } from "./types/ipc";
 
 export function App() {
-  const appVersion = "0.1.1";
+  const appVersion = "0.1.2";
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const initialTheme = (searchParams?.get("theme") as ThemeMode) || "light";
   const initialView = (searchParams?.get("view") as "note" | "new") || "new";
@@ -509,9 +509,14 @@ export function App() {
           {/* Right Column: Actions, Timeline & Audio Player (Concept A) */}
           <RightPanel
             segments={activeEntry?.segments || []}
-            durationFormatted={activeEntry?.duration_formatted || "00:00"}
-            audioPath={activeEntry?.file_path}
-            waveform={activeEntry?.waveform}
+            durationFormatted={
+              activeEntry?.duration_formatted ||
+              (audioMetadata?.duration_seconds
+                ? `${Math.floor(audioMetadata.duration_seconds / 60)}:${Math.floor(audioMetadata.duration_seconds % 60).toString().padStart(2, "0")}`
+                : "00:00")
+            }
+            audioPath={activeEntry?.file_path || selectedFilePath || undefined}
+            waveform={activeEntry?.waveform || audioMetadata?.waveform || undefined}
             onCopyText={handleCopyText}
             onExportText={handleExportText}
             isAutosaved={isAutosaved}

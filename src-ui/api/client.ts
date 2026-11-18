@@ -278,6 +278,7 @@ export class SidecarClient {
     return this.callRpc("start_transcription", {
       file_path: filePath,
       model_id: modelId,
+      device_preference: device,
       device: device,
       dictionary_id: dictionaryId,
     });

@@ -32,11 +32,12 @@ export const Waveform: React.FC<WaveformProps> = ({
 
     ctx.clearRect(0, 0, width, height);
 
-    const values = data.length > 0 ? data : [10, 15, 25, 12, 18, 22, 14, 28, 19, 30, 16, 24];
+    const values = data && data.length > 0 ? data : [10, 15, 25, 12, 18, 22, 14, 28, 19, 30, 16, 24];
+    const maxVal = Math.max(0.0001, ...values);
     const barWidth = 3;
     const gap = 2;
     const totalBars = Math.floor(width / (barWidth + gap));
-    const step = values.length / totalBars;
+    const step = values.length / Math.max(1, totalBars);
 
     const isDark = document.documentElement.getAttribute("data-theme") === "dark";
     const primaryColor = "#577A5B";
@@ -44,8 +45,9 @@ export const Waveform: React.FC<WaveformProps> = ({
 
     for (let i = 0; i < totalBars; i++) {
       const idx = Math.floor(i * step);
-      const val = values[idx] || 10;
-      const barHeight = Math.max(3, (val / 100) * (height - 4));
+      const rawVal = values[idx] != null ? values[idx] : 0;
+      const normalizedRatio = Math.max(0.1, rawVal / maxVal);
+      const barHeight = Math.max(4, Math.round(normalizedRatio * (height - 4)));
       const x = i * (barWidth + gap);
       const y = (height - barHeight) / 2;
 

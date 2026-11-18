@@ -1,5 +1,5 @@
-import React, { useRef, useState, DragEvent } from "react";
-import { Upload, FileAudio, RefreshCw, FolderOpen } from "lucide-react";
+import React, { useRef, useState, useEffect, DragEvent } from "react";
+import { Upload, RefreshCw, FolderOpen, Play, Pause } from "lucide-react";
 import { Button } from "./Button";
 import { Waveform } from "./Waveform";
 import { AudioMetadata, TranscriptionProgress } from "../types/ipc";
@@ -36,6 +36,34 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [previewSrc, setPreviewSrc] = useState<string>("");
+
+  useEffect(() => {
+    if (!selectedFilePath) {
+      setPreviewSrc("");
+      setIsPlayingPreview(false);
+      return;
+    }
+    if (typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__)) {
+      import("@tauri-apps/api/core").then(({ convertFileSrc }) => {
+        setPreviewSrc(convertFileSrc(selectedFilePath));
+      });
+    } else {
+      setPreviewSrc(selectedFilePath);
+    }
+  }, [selectedFilePath]);
+
+  const togglePlayPreview = () => {
+    const audio = previewAudioRef.current;
+    if (!audio || !previewSrc) return;
+    if (isPlayingPreview) {
+      audio.pause();
+    } else {
+      audio.play().catch((err) => console.warn("[PreviewAudio] playback failed:", err));
+    }
+  };
 
   const handlePickFile = async () => {
     try {
@@ -149,9 +177,24 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
           <div className="p-6 rounded-2xl bg-brand-surface dark:bg-dark-surface border border-brand-border dark:border-dark-border shadow-card space-y-5 animate-in fade-in">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3 min-w-0 pr-2">
-                <div className="w-10 h-10 rounded-xl bg-brand-primary-light dark:bg-dark-primary-light flex items-center justify-center text-brand-primary shrink-0">
-                  <FileAudio size={20} />
-                </div>
+                <button
+                  onClick={togglePlayPreview}
+                  className="w-10 h-10 rounded-xl bg-brand-primary-light dark:bg-dark-primary-light hover:bg-brand-primary hover:text-white flex items-center justify-center text-brand-primary transition-colors cursor-pointer shrink-0 shadow-subtle group"
+                  title={isPlayingPreview ? "Пауза" : "Воспроизвести аудиозапись"}
+                >
+                  {isPlayingPreview ? (
+                    <Pause size={18} />
+                  ) : (
+                    <Play size={18} className="ml-0.5 fill-current" />
+                  )}
+                </button>
+                <audio
+                  ref={previewAudioRef}
+                  src={previewSrc}
+                  onPlay={() => setIsPlayingPreview(true)}
+                  onPause={() => setIsPlayingPreview(false)}
+                  onEnded={() => setIsPlayingPreview(false)}
+                />
                 <div className="min-w-0">
                   <h3 className="text-sm font-semibold text-brand-text dark:text-dark-text truncate">
                     {selectedFileName}
