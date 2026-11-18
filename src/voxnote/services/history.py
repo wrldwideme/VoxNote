@@ -32,6 +32,7 @@ class LocalHistoryStore:
         title: str = "",
         edited_text: str | None = None,
         segments: tuple[TranscriptSegment, ...] = (),
+        file_path: str = "",
     ) -> HistoryEntry:
         """Record a completed transcription in the history."""
         cleaned_text = text.strip()
@@ -53,6 +54,7 @@ class LocalHistoryStore:
             title=title.strip(),
             edited_text=edited_text,
             segments=segments,
+            file_path=file_path,
         )
 
         entries = self.get_entries()
@@ -129,6 +131,7 @@ class LocalHistoryStore:
                             title=str(item.get("title", "")),
                             edited_text=edited_text,
                             segments=tuple(parsed_segments),
+                            file_path=str(item.get("file_path", "")),
                         )
                     )
             self._cache = entries
@@ -168,6 +171,8 @@ class LocalHistoryStore:
                     preview=preview,
                     title=item.title,
                     edited_text=edited_text,
+                    segments=item.segments,
+                    file_path=item.file_path,
                 )
                 found = True
             updated.append(item)
@@ -196,6 +201,8 @@ class LocalHistoryStore:
                     preview=item.preview,
                     title=title.strip(),
                     edited_text=item.edited_text,
+                    segments=item.segments,
+                    file_path=item.file_path,
                 )
                 found = True
             updated.append(item)

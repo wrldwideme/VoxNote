@@ -126,6 +126,7 @@ class HistoryEntry:
     title: str = ""
     edited_text: str | None = None
     segments: tuple[TranscriptSegment, ...] = ()
+    file_path: str = ""
 
     @property
     def display_title(self) -> str:

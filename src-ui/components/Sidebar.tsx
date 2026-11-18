@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Plus, AudioLines, Settings, MoreHorizontal, Clock, Play, HelpCircle } from "lucide-react";
+import { Search, Plus, AudioLines, Settings, Clock, Play, HelpCircle, Trash2, Sparkles } from "lucide-react";
 import { HistoryGroup } from "../types/ipc";
 
 export interface SidebarProps {
@@ -12,6 +12,9 @@ export interface SidebarProps {
   onNewFile: () => void;
   onOpenSettings: () => void;
   onOpenOnboarding?: () => void;
+  onDeleteEntry?: (id: string) => void;
+  onOpenUpdates?: () => void;
+  isUpdateAvailable?: boolean;
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
@@ -25,6 +28,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewFile,
   onOpenSettings,
   onOpenOnboarding,
+  onDeleteEntry,
+  onOpenUpdates,
+  isUpdateAvailable,
   searchInputRef,
 }) => {
   return (
@@ -125,11 +131,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (confirm(`Удалить запись "${entry.display_title}" из истории?`)) {
+                          onDeleteEntry?.(entry.id);
+                        }
                       }}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-black/10 dark:hover:bg-white/10 text-brand-text-secondary transition-opacity shrink-0"
-                      title="Действия с заметкой"
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-brand-danger/10 text-brand-text-secondary hover:text-brand-danger transition-all shrink-0 cursor-pointer"
+                      title="Удалить из истории"
                     >
-                      <MoreHorizontal size={13} />
+                      <Trash2 size={13} />
                     </button>
                   </div>
                 );
@@ -158,6 +167,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Settings size={14} className="shrink-0" />
           <span className="truncate">Настройки</span>
         </button>
+
+        {onOpenUpdates && (
+          <button
+            onClick={onOpenUpdates}
+            className={`relative p-1.5 rounded-lg transition-colors cursor-pointer shrink-0 ${
+              isUpdateAvailable
+                ? "bg-brand-primary text-white hover:bg-brand-primary-hover shadow-subtle"
+                : "text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5"
+            }`}
+            title={isUpdateAvailable ? "Доступно обновление VoxNote!" : "Проверить обновления на GitHub"}
+          >
+            <Sparkles size={14} />
+            {isUpdateAvailable && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-brand-accent animate-ping" />
+            )}
+          </button>
+        )}
       </div>
     </aside>
   );

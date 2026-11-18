@@ -1,14 +1,17 @@
 import React, { useRef, useState, DragEvent } from "react";
-import { Upload, FileAudio, RefreshCw } from "lucide-react";
+import { Upload, FileAudio, RefreshCw, FolderOpen } from "lucide-react";
 import { Button } from "./Button";
 import { Waveform } from "./Waveform";
 import { AudioMetadata, TranscriptionProgress } from "../types/ipc";
+import { sidecarClient } from "../api/client";
 
 export interface WorkspaceNewProps {
-  onFileSelected: (file: File) => void;
+  onFileSelected: (fileOrPath: File | string) => void;
   onStartTranscription: () => void;
   onCancelTranscription: () => void;
-  selectedFile: File | null;
+  selectedFilePath: string | null;
+  selectedFileName: string | null;
+  selectedFileSize: number | null;
   audioMetadata: AudioMetadata | null;
   isProcessing: boolean;
   progress: TranscriptionProgress | null;
@@ -22,7 +25,9 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
   onFileSelected,
   onStartTranscription,
   onCancelTranscription,
-  selectedFile,
+  selectedFilePath,
+  selectedFileName,
+  selectedFileSize,
   audioMetadata,
   isProcessing,
   progress,
@@ -31,6 +36,19 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  const handlePickFile = async () => {
+    try {
+      const picked = await sidecarClient.pickAudioFile();
+      if (picked) {
+        onFileSelected(picked);
+        return;
+      }
+    } catch {
+      // Fallback to browser input
+    }
+    fileInputRef.current?.click();
+  };
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -45,11 +63,14 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      onFileSelected(e.dataTransfer.files[0]);
+      const f = e.dataTransfer.files[0];
+      const fullPath = (f as any).path || f;
+      onFileSelected(fullPath);
     }
   };
 
-  const formatFileSize = (bytes: number) => {
+  const formatFileSize = (bytes: number | null) => {
+    if (!bytes) return "";
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
   };
@@ -75,15 +96,15 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold text-brand-text dark:text-dark-text truncate max-w-md">
-                  {selectedFile?.name || "Аудиозапись"}
+                  {selectedFileName || "Аудиозапись"}
                 </h3>
                 <p className="text-xs text-brand-text-secondary dark:text-dark-text-secondary mt-0.5">
-                  Распознаём русскую речь локально...
+                  Распознаём русскую речь локально (быстрое ядро Whisper)...
                 </p>
               </div>
 
               <span className="text-lg font-bold text-brand-primary tabular-nums">
-                {progress?.percent != null ? `${Math.round(progress.percent)}%` : "Подготовка..."}
+                {progress?.percent != null ? `${Math.round(progress.percent)}%` : "0%"}
               </span>
             </div>
 
@@ -95,9 +116,9 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
                 height={48}
               />
 
-              <div className="w-full h-1.5 bg-black/5 dark:bg-white/10 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-black/5 dark:bg-white/10 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-brand-primary transition-all duration-200"
+                  className="h-full bg-brand-primary transition-all duration-300"
                   style={{ width: `${progress?.percent || 0}%` }}
                 />
               </div>
@@ -123,7 +144,7 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
               </Button>
             </div>
           </div>
-        ) : selectedFile ? (
+        ) : selectedFilePath ? (
           /* File Selected Card */
           <div className="p-6 rounded-2xl bg-brand-surface dark:bg-dark-surface border border-brand-border dark:border-dark-border shadow-card space-y-5 animate-in fade-in">
             <div className="flex items-center justify-between">
@@ -133,10 +154,10 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-sm font-semibold text-brand-text dark:text-dark-text truncate">
-                    {selectedFile.name}
+                    {selectedFileName}
                   </h3>
                   <div className="text-xs text-brand-text-secondary dark:text-dark-text-secondary flex items-center gap-2 mt-0.5">
-                    <span>{formatFileSize(selectedFile.size)}</span>
+                    {selectedFileSize && <span>{formatFileSize(selectedFileSize)}</span>}
                     {audioMetadata?.duration_seconds && (
                       <>
                         <span>·</span>
@@ -150,7 +171,8 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={handlePickFile}
+                icon={<FolderOpen size={13} />}
               >
                 Изменить файл
               </Button>
@@ -173,7 +195,7 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={handlePickFile}
             className={`p-10 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-3 text-center cursor-pointer transition-all duration-200 ${
               isDragging
                 ? "border-brand-primary bg-brand-primary-light/40 dark:bg-dark-primary-light/20 scale-[1.01]"
@@ -200,7 +222,9 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
               className="hidden"
               onChange={(e) => {
                 if (e.target.files && e.target.files.length > 0) {
-                  onFileSelected(e.target.files[0]);
+                  const f = e.target.files[0];
+                  const fullPath = (f as any).path || f;
+                  onFileSelected(fullPath);
                 }
               }}
             />

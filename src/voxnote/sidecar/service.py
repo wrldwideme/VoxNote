@@ -462,6 +462,7 @@ class SidecarService:
                         text=result.text,
                         title=source.stem,
                         segments=result.segments,
+                        file_path=str(source.resolve()),
                     )
                     entry_dict = self._serialize_history_entry(saved_entry)
 
@@ -881,6 +882,7 @@ class SidecarService:
             "current_text": entry.current_text,
             "has_edits": entry.has_edits,
             "segments": [asdict(s) for s in segments],
+            "file_path": getattr(entry, "file_path", ""),
         }
 
     @staticmethod

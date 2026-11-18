@@ -35,6 +35,8 @@ export interface HistoryEntry {
   current_text: string;
   has_edits: boolean;
   segments: TranscriptSegment[];
+  file_path?: string;
+  waveform?: number[];
 }
 
 export interface HistoryGroup {

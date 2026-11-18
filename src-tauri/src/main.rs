@@ -162,6 +162,24 @@ fn get_sidecar_status(state: State<AppState>) -> Result<SidecarStatus, String> {
 }
 
 #[tauri::command]
+fn pick_audio_file() -> Result<Option<String>, String> {
+    let file = rfd::FileDialog::new()
+        .set_title("Выберите аудиозапись для расшифровки")
+        .add_filter("Аудиофайлы (*.m4a, *.mp3, *.wav, *.flac, *.ogg)", &["m4a", "mp3", "wav", "flac", "ogg"])
+        .pick_file();
+    Ok(file.map(|p| p.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+fn pick_dictionary_file() -> Result<Option<String>, String> {
+    let file = rfd::FileDialog::new()
+        .set_title("Выберите файл словаря терминов (.txt)")
+        .add_filter("Текстовые файлы (*.txt)", &["txt"])
+        .pick_file();
+    Ok(file.map(|p| p.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 fn minimize_window(window: Window) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
 }
@@ -180,6 +198,12 @@ fn close_window(window: Window) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+    app.shell().open(&url, None).map_err(|e| e.to_string())
+}
+
 fn main() {
     let sidecar_state = Arc::new(Mutex::new(SidecarProcess::default()));
     let sidecar_for_setup = sidecar_state.clone();
@@ -193,9 +217,12 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             send_to_sidecar,
             get_sidecar_status,
+            pick_audio_file,
+            pick_dictionary_file,
             minimize_window,
             maximize_window,
             close_window,
+            open_external_url,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

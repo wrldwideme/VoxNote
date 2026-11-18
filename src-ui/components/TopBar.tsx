@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronDown, Info, Moon, Sun, Cpu, SlidersHorizontal, BookOpen, Minus, Square, X } from "lucide-react";
+import { ChevronDown, Info, Moon, Sun, Cpu, SlidersHorizontal, BookOpen, Minus, Square, X, Sparkles } from "lucide-react";
 import { Badge } from "./Badge";
 import { DevicePreference, ThemeMode } from "../types/ipc";
 
@@ -13,6 +13,8 @@ export interface TopBarProps {
   onToggleDevice: () => void;
   onToggleTheme: () => void;
   onOpenPrivacyInfo: () => void;
+  onOpenUpdates?: () => void;
+  isUpdateAvailable?: boolean;
   onMinimizeWindow?: () => void;
   onMaximizeWindow?: () => void;
   onCloseWindow?: () => void;
@@ -28,6 +30,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleDevice,
   onToggleTheme,
   onOpenPrivacyInfo,
+  onOpenUpdates,
+  isUpdateAvailable,
   onMinimizeWindow,
   onMaximizeWindow,
   onCloseWindow,
@@ -91,6 +95,17 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           <Info size={15} />
         </button>
+
+        {isUpdateAvailable && onOpenUpdates && (
+          <button
+            onClick={onOpenUpdates}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-primary text-white text-xs font-semibold shadow-subtle hover:bg-brand-primary-hover transition-all cursor-pointer animate-pulse"
+            title="Доступно новое обновление VoxNote! Нажмите для просмотра"
+          >
+            <Sparkles size={13} />
+            <span>Обновление!</span>
+          </button>
+        )}
 
         <button
           onClick={onToggleTheme}

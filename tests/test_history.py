@@ -308,3 +308,27 @@ def test_get_grouped_entries_and_search(tmp_path: Path) -> None:
 
     search_empty = store.get_grouped_entries(search_query="несуществующее")
     assert len(search_empty) == 0
+
+
+def test_add_entry_stores_and_persists_file_path(tmp_path: Path) -> None:
+    history_file = tmp_path / "history.json"
+    store = LocalHistoryStore(history_file)
+
+    sample_audio_path = r"C:\Users\wrld alone\Music\sample.m4a"
+    entry = store.add_entry(
+        file_name="sample.m4a",
+        duration_seconds=120.0,
+        model_id="small",
+        device="CPU",
+        dictionary_id=None,
+        text="Тестовая расшифровка.",
+        file_path=sample_audio_path,
+    )
+
+    assert entry.file_path == sample_audio_path
+
+    # Reload from disk to verify serialization and deserialization
+    reloaded_store = LocalHistoryStore(history_file)
+    entries = reloaded_store.get_entries()
+    assert len(entries) == 1
+    assert entries[0].file_path == sample_audio_path

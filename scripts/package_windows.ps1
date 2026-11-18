@@ -17,13 +17,18 @@ $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 pnpm tauri build
 
 Write-Host "=== Step 5: Create Portable ZIP distribution and collect artifacts ===" -ForegroundColor Cyan
+$version = "0.1.1"
 $releaseDir = "src-tauri\target\release"
 $artifactsDir = "release-artifacts"
-$portableDir = "$artifactsDir\VoxNote-0.1.0-Portable"
+$portableDir = "$artifactsDir\VoxNote-$version-Portable"
 
 New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
-Copy-Item "src-tauri\target\release\bundle\nsis\VoxNote_0.1.0_x64-setup.exe" -Destination "$artifactsDir\" -Force
-Copy-Item "src-tauri\target\release\bundle\msi\VoxNote_0.1.0_x64_en-US.msi" -Destination "$artifactsDir\" -Force
+if (Test-Path "src-tauri\target\release\bundle\nsis\VoxNote_${version}_x64-setup.exe") {
+    Copy-Item "src-tauri\target\release\bundle\nsis\VoxNote_${version}_x64-setup.exe" -Destination "$artifactsDir\" -Force
+}
+if (Test-Path "src-tauri\target\release\bundle\msi\VoxNote_${version}_x64_en-US.msi") {
+    Copy-Item "src-tauri\target\release\bundle\msi\VoxNote_${version}_x64_en-US.msi" -Destination "$artifactsDir\" -Force
+}
 
 if (Test-Path "$releaseDir\voxnote.exe") {
     if (Test-Path $portableDir) { Remove-Item -Recurse -Force $portableDir }
@@ -32,8 +37,8 @@ if (Test-Path "$releaseDir\voxnote.exe") {
     Copy-Item "$releaseDir\voxnote.exe" -Destination "$portableDir\VoxNote.exe"
     Copy-Item -Recurse "src-tauri\binaries\voxnote-sidecar" -Destination "$portableDir\voxnote-sidecar"
     
-    Compress-Archive -Path "$portableDir\*" -DestinationPath "$artifactsDir\VoxNote-0.1.0-Windows-x64-Portable.zip" -Force
-    Write-Host "Portable archive created at $artifactsDir\VoxNote-0.1.0-Windows-x64-Portable.zip" -ForegroundColor Green
+    Compress-Archive -Path "$portableDir\*" -DestinationPath "$artifactsDir\VoxNote-$version-Windows-x64-Portable.zip" -Force
+    Write-Host "Portable archive created at $artifactsDir\VoxNote-$version-Windows-x64-Portable.zip" -ForegroundColor Green
 }
 
 Write-Host "=== Packaging Complete! ===" -ForegroundColor Green

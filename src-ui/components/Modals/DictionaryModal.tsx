@@ -3,13 +3,14 @@ import { Check, Upload, Trash2 } from "lucide-react";
 import { Modal } from "../Modal";
 import { Button } from "../Button";
 import { DictionaryOption } from "../../types/ipc";
+import { sidecarClient } from "../../api/client";
 
 export interface DictionaryModalProps {
   isOpen: boolean;
   onClose: () => void;
   dictionaries: DictionaryOption[];
   onSelectDictionary: (dictId: string) => void;
-  onImportCustomDictionary: (file: File) => void;
+  onImportCustomDictionary: (fileOrPath: File | string) => void;
   onRemoveCustomDictionary: () => void;
 }
 
@@ -22,6 +23,19 @@ export const DictionaryModal: React.FC<DictionaryModalProps> = ({
   onRemoveCustomDictionary,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePickDictionary = async () => {
+    try {
+      const picked = await sidecarClient.pickDictionaryFile();
+      if (picked) {
+        onImportCustomDictionary(picked);
+        return;
+      }
+    } catch {
+      // fallback
+    }
+    fileInputRef.current?.click();
+  };
 
   return (
     <Modal
@@ -84,7 +98,7 @@ export const DictionaryModal: React.FC<DictionaryModalProps> = ({
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={handlePickDictionary}
             icon={<Upload size={13} />}
           >
             Импортировать свой словарь (.txt)

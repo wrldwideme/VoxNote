@@ -12,6 +12,13 @@ export interface ModelManagerModalProps {
   onSelectModel: (modelId: string) => void;
   onDownloadModel: (modelId: string) => void;
   onRemoveModel: (modelId: string) => void;
+  downloadProgress?: {
+    model_id: string;
+    percent: number;
+    downloaded_bytes: number;
+    total_bytes: number;
+  } | null;
+  onCancelDownload?: (modelId: string) => void;
 }
 
 export const ModelManagerModal: React.FC<ModelManagerModalProps> = ({
@@ -21,6 +28,8 @@ export const ModelManagerModal: React.FC<ModelManagerModalProps> = ({
   onSelectModel,
   onDownloadModel,
   onRemoveModel,
+  downloadProgress,
+  onCancelDownload,
 }) => {
   const [modelsPath, setModelsPath] = useState<string>("%LOCALAPPDATA%\\VoxNote\\models");
   const [isCustom, setIsCustom] = useState(false);
@@ -194,11 +203,32 @@ export const ModelManagerModal: React.FC<ModelManagerModalProps> = ({
                         {model.selected ? "Выбрана" : "Выбрать"}
                       </Button>
                     </>
+                  ) : downloadProgress && downloadProgress.model_id === model.model_id ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-24 bg-black/10 dark:bg-white/10 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-brand-primary h-full transition-all duration-300"
+                          style={{ width: `${downloadProgress.percent}%` }}
+                        />
+                      </div>
+                      <span className="text-[11px] font-bold tabular-nums text-brand-primary">
+                        {Math.round(downloadProgress.percent)}%
+                      </span>
+                      {onCancelDownload && (
+                        <button
+                          onClick={() => onCancelDownload(model.model_id)}
+                          className="text-[11px] text-brand-danger hover:underline ml-1 cursor-pointer"
+                        >
+                          Отмена
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <Button
                       size="sm"
                       variant="primary"
                       onClick={() => onDownloadModel(model.model_id)}
+                      disabled={Boolean(downloadProgress)}
                       icon={<Download size={13} />}
                     >
                       Загрузить ({model.size_text})

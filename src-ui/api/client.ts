@@ -359,6 +359,52 @@ export class SidecarClient {
     return this.callRpc("copy_diagnostics");
   }
 
+  // Tauri Native Window & File Dialog Helpers
+  public async pickAudioFile(): Promise<string | null> {
+    if (this.isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke<string | null>("pick_audio_file");
+    }
+    return null;
+  }
+
+  public async pickDictionaryFile(): Promise<string | null> {
+    if (this.isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke<string | null>("pick_dictionary_file");
+    }
+    return null;
+  }
+
+  public async minimizeWindow(): Promise<void> {
+    if (this.isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke("minimize_window");
+    }
+  }
+
+  public async maximizeWindow(): Promise<void> {
+    if (this.isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke("maximize_window");
+    }
+  }
+
+  public async closeWindow(): Promise<void> {
+    if (this.isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke("close_window");
+    }
+  }
+
+  public async openExternalUrl(url: string): Promise<void> {
+    if (this.isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke("open_external_url", { url });
+    }
+    window.open(url, "_blank");
+  }
+
   // Mock Fallback Helpers
   private getMockSystemInfo(): SystemInfo {
     return {
