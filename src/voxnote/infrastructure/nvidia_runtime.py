@@ -29,7 +29,10 @@ def discover_nvidia_dll_directories() -> tuple[Path, ...]:
                     directories.append(candidate)
 
     for package in ("nvidia.cublas", "nvidia.cudnn", "nvidia.cuda_nvrtc"):
-        spec = find_spec(package)
+        try:
+            spec = find_spec(package)
+        except (ImportError, AttributeError, ValueError):
+            continue
         if spec is None or spec.submodule_search_locations is None:
             continue
         for location in spec.submodule_search_locations:

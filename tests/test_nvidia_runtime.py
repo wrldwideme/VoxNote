@@ -24,3 +24,11 @@ def test_registers_existing_nvidia_dll_directories(tmp_path: Path) -> None:
     else:
         assert registered == ()
         assert handles == []
+
+
+def test_discover_nvidia_dll_directories_handles_missing_packages(monkeypatch) -> None:
+    from voxnote.infrastructure.nvidia_runtime import discover_nvidia_dll_directories
+
+    # Should safely return a tuple without raising ModuleNotFoundError or ImportError
+    directories = discover_nvidia_dll_directories()
+    assert isinstance(directories, tuple)
