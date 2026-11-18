@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VoxNote — Сфокусированное рабочее пространство</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      (function() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const theme = params.get('theme');
+          if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.setAttribute('data-theme', 'dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="bg-brand-background dark:bg-dark-background text-brand-text dark:text-dark-text antialiased selection:bg-brand-primary-light selection:text-brand-primary select-none overflow-hidden h-screen w-screen m-0 p-0 font-sans">
+    <div id="root" class="h-full w-full"></div>
+    <script type="module" src="/src-ui/main.tsx"></script>
+  </body>
+</html>

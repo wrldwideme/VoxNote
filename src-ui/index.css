@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --app-bg: #F7F3EE;
+    --app-surface: #FFFDF8;
+    --app-border: #E8E1D7;
+    --app-text: #1F2A22;
+    --app-text-muted: #6B736D;
+    --app-primary: #577A5B;
+    --app-primary-light: #E9F2E8;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --app-bg: #141715;
+    --app-surface: #1B211D;
+    --app-border: #2C362F;
+    --app-text: #EEF3EF;
+    --app-text-muted: #9BA8A0;
+    --app-primary: #577A5B;
+    --app-primary-light: #1E3023;
+  }
+
+  body {
+    background-color: var(--app-bg);
+    color: var(--app-text);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(107, 114, 128, 0.2);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 114, 128, 0.4);
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
