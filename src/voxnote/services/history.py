@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import suppress
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from voxnote.domain.models import HistoryEntry, TranscriptSegment
+from voxnote.domain.models import HistoryEntry, HistoryRevision, TranscriptSegment
 
 MAX_HISTORY_ENTRIES = 50
+MAX_REVISIONS_PER_ENTRY = 20
 
 
 class LocalHistoryStore:
@@ -33,6 +34,9 @@ class LocalHistoryStore:
         edited_text: str | None = None,
         segments: tuple[TranscriptSegment, ...] = (),
         file_path: str = "",
+        status: str = "completed",
+        resume_from_seconds: float = 0.0,
+        revisions: tuple[HistoryRevision, ...] = (),
     ) -> HistoryEntry:
         """Record a completed transcription in the history."""
         cleaned_text = text.strip()
@@ -55,6 +59,9 @@ class LocalHistoryStore:
             edited_text=edited_text,
             segments=segments,
             file_path=file_path,
+            status=status,
+            resume_from_seconds=max(0.0, resume_from_seconds),
+            revisions=revisions,
         )
 
         entries = self.get_entries()
@@ -106,6 +113,7 @@ class LocalHistoryStore:
                     edited_val = item.get("edited_text")
                     edited_text = str(edited_val) if edited_val is not None else None
                     raw_segments = item.get("segments")
+                    raw_revisions = item.get("revisions")
                     parsed_segments: list[TranscriptSegment] = []
                     if isinstance(raw_segments, list):
                         for seg in raw_segments:
@@ -115,6 +123,16 @@ class LocalHistoryStore:
                                         start=float(seg.get("start", 0.0)),
                                         end=float(seg.get("end", 0.0)),
                                         text=str(seg.get("text", "")),
+                                    )
+                                )
+                    parsed_revisions: list[HistoryRevision] = []
+                    if isinstance(raw_revisions, list):
+                        for revision in raw_revisions[:MAX_REVISIONS_PER_ENTRY]:
+                            if isinstance(revision, dict) and "text" in revision:
+                                parsed_revisions.append(
+                                    HistoryRevision(
+                                        created_at=str(revision.get("created_at", "")),
+                                        text=str(revision["text"]),
                                     )
                                 )
                     entries.append(
@@ -132,6 +150,11 @@ class LocalHistoryStore:
                             edited_text=edited_text,
                             segments=tuple(parsed_segments),
                             file_path=str(item.get("file_path", "")),
+                            status=str(item.get("status", "completed")),
+                            resume_from_seconds=max(
+                                0.0, float(item.get("resume_from_seconds", 0.0))
+                            ),
+                            revisions=tuple(parsed_revisions),
                         )
                     )
             self._cache = entries
@@ -156,6 +179,9 @@ class LocalHistoryStore:
         for item in entries:
             if item.id == entry_id:
                 cleaned = edited_text.strip()
+                if cleaned == item.current_text.strip():
+                    updated.append(item)
+                    continue
                 preview = cleaned[:120].replace("\n", " ").strip()
                 if len(cleaned) > 120:
                     preview += "…"
@@ -173,6 +199,15 @@ class LocalHistoryStore:
                     edited_text=edited_text,
                     segments=item.segments,
                     file_path=item.file_path,
+                    status=item.status,
+                    resume_from_seconds=item.resume_from_seconds,
+                    revisions=(
+                        HistoryRevision(
+                            created_at=datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+                            text=item.current_text,
+                        ),
+                        *item.revisions[: MAX_REVISIONS_PER_ENTRY - 1],
+                    ),
                 )
                 found = True
             updated.append(item)
@@ -203,6 +238,9 @@ class LocalHistoryStore:
                     edited_text=item.edited_text,
                     segments=item.segments,
                     file_path=item.file_path,
+                    status=item.status,
+                    resume_from_seconds=item.resume_from_seconds,
+                    revisions=item.revisions,
                 )
                 found = True
             updated.append(item)
@@ -210,6 +248,86 @@ class LocalHistoryStore:
         if found:
             self._save(updated)
         return found
+
+    def update_entry_file_path(self, entry_id: str, file_path: str) -> HistoryEntry | None:
+        """Relink a history entry to a user-confirmed local source file."""
+        entries = self.get_entries()
+        updated_entry: HistoryEntry | None = None
+        updated_entries: list[HistoryEntry] = []
+        for item in entries:
+            if item.id == entry_id:
+                updated_entry = replace(item, file_path=file_path)
+                item = updated_entry
+            updated_entries.append(item)
+        if updated_entry is not None:
+            self._save(updated_entries)
+        return updated_entry
+
+    def recover_interrupted_entries(self) -> int:
+        """Mark checkpoints left by a terminated process as resumable interruptions."""
+        entries = self.get_entries()
+        recovered = 0
+        updated: list[HistoryEntry] = []
+        for item in entries:
+            if item.status == "in_progress":
+                item = replace(item, status="interrupted")
+                recovered += 1
+            updated.append(item)
+        if recovered:
+            self._save(updated)
+        return recovered
+
+    def update_transcription(
+        self,
+        entry_id: str,
+        *,
+        text: str,
+        segments: tuple[TranscriptSegment, ...],
+        status: str,
+        resume_from_seconds: float,
+        device: str,
+    ) -> HistoryEntry | None:
+        """Replace model output while preserving the entry identity and user title."""
+        entries = self.get_entries()
+        updated_entries: list[HistoryEntry] = []
+        updated_entry: HistoryEntry | None = None
+        cleaned_text = text.strip()
+
+        for item in entries:
+            if item.id == entry_id:
+                edited_text = item.edited_text
+                if edited_text is not None and cleaned_text.startswith(item.text):
+                    appended_text = cleaned_text[len(item.text) :].strip()
+                    if appended_text:
+                        edited_text = f"{edited_text.strip()} {appended_text}".strip()
+                effective_text = edited_text if edited_text is not None else cleaned_text
+                preview = effective_text[:120].replace("\n", " ").strip()
+                if len(effective_text) > 120:
+                    preview += "…"
+                updated_entry = HistoryEntry(
+                    id=item.id,
+                    created_at=item.created_at,
+                    file_name=item.file_name,
+                    duration_seconds=item.duration_seconds,
+                    model_id=item.model_id,
+                    device=device,
+                    dictionary_id=item.dictionary_id,
+                    text=cleaned_text,
+                    preview=preview,
+                    title=item.title,
+                    edited_text=edited_text,
+                    segments=segments,
+                    file_path=item.file_path,
+                    status=status,
+                    resume_from_seconds=max(0.0, resume_from_seconds),
+                    revisions=item.revisions,
+                )
+                item = updated_entry
+            updated_entries.append(item)
+
+        if updated_entry is not None:
+            self._save(updated_entries)
+        return updated_entry
 
     def get_grouped_entries(self, search_query: str = "") -> list[tuple[str, list[HistoryEntry]]]:
         """Return history entries grouped by date."""

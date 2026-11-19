@@ -64,6 +64,7 @@ class TranscriptionJob:
     model_id: str
     dictionary_id: str | None = None
     device_preference: str = "auto"
+    resume_from_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,7 @@ class ProgressSnapshot:
     total_seconds: float | None
     elapsed_seconds: float
     eta_seconds: float | None = None
+    partial_segments: tuple[TranscriptSegment, ...] = ()
 
     @property
     def percent(self) -> float | None:
@@ -113,6 +115,12 @@ class TranscriptionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class HistoryRevision:
+    created_at: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class HistoryEntry:
     id: str
     created_at: str
@@ -127,6 +135,9 @@ class HistoryEntry:
     edited_text: str | None = None
     segments: tuple[TranscriptSegment, ...] = ()
     file_path: str = ""
+    status: str = "completed"
+    resume_from_seconds: float = 0.0
+    revisions: tuple[HistoryRevision, ...] = ()
 
     @property
     def display_title(self) -> str:

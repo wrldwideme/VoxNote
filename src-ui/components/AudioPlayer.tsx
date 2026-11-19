@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Play, Pause, AlertCircle } from "lucide-react";
+import { Play, Pause, AlertCircle, Volume2, VolumeX } from "lucide-react";
 import { Waveform } from "./Waveform";
 
 export interface AudioPlayerProps {
@@ -33,6 +33,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [speed, setSpeed] = useState<"1x" | "1.25x" | "1.5x" | "2x">("1x");
   const [audioSrc, setAudioSrc] = useState<string>("");
   const [loadError, setLoadError] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const lastAudibleVolumeRef = useRef(1);
 
   // Convert Windows filesystem path to Tauri Asset URL
   useEffect(() => {
@@ -96,6 +98,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     audio.currentTime = targetTime;
     setPlaybackProgress(progressRatio);
     setCurrentSeconds(targetTime);
+  };
+
+  const setPlayerVolume = (nextVolume: number) => {
+    const normalized = Math.min(1, Math.max(0, nextVolume));
+    setVolume(normalized);
+    if (normalized > 0) lastAudibleVolumeRef.current = normalized;
+    if (audioRef.current) audioRef.current.volume = normalized;
+  };
+
+  const toggleMute = () => {
+    setPlayerVolume(volume > 0 ? 0 : lastAudibleVolumeRef.current);
   };
 
   const formatSeconds = (sec: number) => {
@@ -174,14 +187,40 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           )}
         </div>
 
-        <button
-          onClick={toggleSpeed}
-          disabled={!audioSrc || loadError}
-          className="px-2 py-0.5 text-xs font-semibold rounded bg-black/5 dark:bg-white/5 text-brand-text dark:text-dark-text hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
-          title="Скорость воспроизведения"
-        >
-          {speed}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleMute}
+              disabled={!audioSrc || loadError}
+              className="text-brand-text-secondary dark:text-dark-text-secondary disabled:opacity-40"
+              title={volume > 0 ? "Выключить звук" : "Включить звук"}
+              aria-label={volume > 0 ? "Выключить звук" : "Включить звук"}
+            >
+              {volume > 0 ? <Volume2 size={14} /> : <VolumeX size={14} />}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={volume}
+              onChange={(event) => setPlayerVolume(Number(event.target.value))}
+              disabled={!audioSrc || loadError}
+              aria-label="Громкость"
+              className="w-16 accent-brand-primary cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+            />
+          </div>
+
+          <button
+            onClick={toggleSpeed}
+            disabled={!audioSrc || loadError}
+            className="px-2 py-0.5 text-xs font-semibold rounded bg-black/5 dark:bg-white/5 text-brand-text dark:text-dark-text hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+            title="Скорость воспроизведения"
+          >
+            {speed}
+          </button>
+        </div>
       </div>
     </div>
   );

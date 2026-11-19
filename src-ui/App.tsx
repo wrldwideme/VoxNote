@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceNote } from "./components/WorkspaceNote";
 import { WorkspaceNew } from "./components/WorkspaceNew";
+import { WorkspaceHome } from "./components/WorkspaceHome";
 import { RightPanel } from "./components/RightPanel";
 import { ModelManagerModal } from "./components/Modals/ModelManagerModal";
 import { DictionaryModal } from "./components/Modals/DictionaryModal";
 import { PrivacyModal } from "./components/Modals/PrivacyModal";
 import { OnboardingModal } from "./components/Modals/OnboardingModal";
 import { UpdateModal } from "./components/Modals/UpdateModal";
-import { sidecarClient } from "./api/client";
+import { PreferencesModal } from "./components/Modals/PreferencesModal";
+import { RuntimeSetup } from "./components/RuntimeSetup";
+import { RuntimeStatus, sidecarClient } from "./api/client";
 import {
   AudioMetadata,
   DictionaryOption,
@@ -20,15 +23,41 @@ import {
   TranscriptionProgress,
 } from "./types/ipc";
 
+type ProcessingPhase = "loading_model" | "transcribing" | "finalizing";
+
+interface ProcessingRuntime {
+  modelId: string;
+  device: string;
+  deviceLabel: string;
+}
+
+const formatModelLabel = (modelId: string) => {
+  if (modelId === "small") return "Быстрая (small)";
+  if (modelId === "turbo" || modelId === "large-v3-turbo") return "Сбалансированная (turbo)";
+  if (modelId === "large-v3") return "Максимальная точность (large-v3)";
+  return modelId;
+};
+
+const formatDeviceLabel = (device: string, fallback = "") => {
+  if (device === "cuda") {
+    if (!fallback || fallback.toLowerCase() === "cuda") return "Видеокарта NVIDIA (CUDA)";
+    if (/видеокарта|cuda/i.test(fallback)) return fallback;
+    return `Видеокарта: ${fallback} (CUDA)`;
+  }
+  if (device === "cpu") return "Процессор (CPU)";
+  if (device === "auto") return "Автовыбор (GPU → CPU)";
+  return fallback || device;
+};
+
 export function App() {
-  const appVersion = "0.1.2";
+  const appVersion = "0.2.0";
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const initialTheme = (searchParams?.get("theme") as ThemeMode) || "light";
-  const initialView = (searchParams?.get("view") as "note" | "new") || "new";
+  const initialView = (searchParams?.get("view") as "home" | "note" | "new") || "home";
   const initialModal = searchParams?.get("modal");
 
   const [theme, setTheme] = useState<ThemeMode>(initialTheme);
-  const [activeWorkspace, setActiveWorkspace] = useState<"note" | "new">(initialView);
+  const [activeWorkspace, setActiveWorkspace] = useState<"home" | "note" | "new">(initialView);
   const [activeLectureId, setActiveLectureId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [historyGroups, setHistoryGroups] = useState<HistoryGroup[]>([]);
@@ -46,21 +75,35 @@ export function App() {
   const [isDictsOpen, setIsDictsOpen] = useState(initialModal === "dict");
   const [isPrivacyOpen, setIsPrivacyOpen] = useState(initialModal === "privacy");
   const [isUpdateOpen, setIsUpdateOpen] = useState(initialModal === "update");
+  const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(
     initialModal === "onboarding" ||
       (typeof window !== "undefined" && !localStorage.getItem("voxnote_onboarding_seen"))
   );
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [runtimeChecked, setRuntimeChecked] = useState(false);
+  const runtimeBootstrappedRef = useRef(false);
 
   // New transcription state
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [selectedFileSize, setSelectedFileSize] = useState<number | null>(null);
   const [audioMetadata, setAudioMetadata] = useState<AudioMetadata | null>(null);
+  const [isInspectingAudio, setIsInspectingAudio] = useState(false);
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [progress, setProgress] = useState<TranscriptionProgress | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [relinkError, setRelinkError] = useState<string | null>(null);
+  const [processingPhase, setProcessingPhase] = useState<ProcessingPhase>("loading_model");
+  const [processingRuntime, setProcessingRuntime] = useState<ProcessingRuntime | null>(null);
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
+  const isProcessingRef = useRef(false);
+  const allowNativeCloseRef = useRef(false);
+  const closeAfterCancellationRef = useRef(false);
 
   // Model download state
   const [downloadProgress, setDownloadProgress] = useState<{
@@ -78,18 +121,82 @@ export function App() {
   const debounceTimerRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Load initial data
+  const requestNativeClose = async () => {
+    allowNativeCloseRef.current = true;
+    if (typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__)) {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+    } else {
+      window.close();
+    }
+  };
+
+  // The desktop shell can start without the heavy ML runtime. Check it before
+  // issuing JSON-RPC calls so first launch remains a valid application state.
   useEffect(() => {
-    loadHistory();
-    loadModels();
-    loadDictionaries();
+    sidecarClient
+      .getRuntimeStatus()
+      .then(setRuntimeStatus)
+      .finally(() => setRuntimeChecked(true));
+  }, []);
+
+  useEffect(() => {
+    if (!runtimeStatus?.ready || runtimeBootstrappedRef.current) return;
+    runtimeBootstrappedRef.current = true;
+    const timer = window.setTimeout(() => {
+      void loadHistory();
+      void loadModels();
+      void loadDictionaries();
+      sidecarClient.getSystemInfo().then((info) => {
+        if (!searchParams?.has("theme")) setTheme(info.theme);
+        setReduceMotion(info.reduce_motion);
+        setDevicePreference(info.device_preference);
+      }).catch(() => {
+        runtimeBootstrappedRef.current = false;
+      });
+    }, runtimeStatus.dev_runtime ? 0 : 350);
+    return () => window.clearTimeout(timer);
+  }, [runtimeStatus?.ready]);
+
+  const handleRuntimeReady = useCallback((nextStatus: RuntimeStatus) => {
+    runtimeBootstrappedRef.current = false;
+    setRuntimeStatus(nextStatus);
   }, []);
 
   // Theme synchronization
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    document.documentElement.classList.toggle("dark", theme === "dark");
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const dark = theme === "dark" || (theme === "system" && media.matches);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      document.documentElement.classList.toggle("dark", dark);
+    };
+    applyTheme();
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
   }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-reduce-motion", String(reduceMotion));
+  }, [reduceMotion]);
+
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
+  useEffect(() => {
+    const internals = (window as any).__TAURI_INTERNALS__;
+    if (!internals || typeof internals.invoke !== "function") return;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      unlisten = await getCurrentWindow().onCloseRequested((event) => {
+        if (allowNativeCloseRef.current || !isProcessingRef.current) return;
+        event.preventDefault();
+        setIsCloseConfirmOpen(true);
+      });
+    });
+    return () => unlisten?.();
+  }, []);
 
   // Check for updates on GitHub Releases
   useEffect(() => {
@@ -116,8 +223,23 @@ export function App() {
       setProgress(data);
     });
 
+    const unRuntime = sidecarClient.on("transcription_runtime_selected", (data: any) => {
+      setProcessingRuntime({
+        modelId: data.model_id,
+        device: data.device,
+        deviceLabel: formatDeviceLabel(data.device, data.device_label),
+      });
+    });
+
+    const unState = sidecarClient.on("state_changed", (data: any) => {
+      if (["loading_model", "transcribing", "finalizing"].includes(data.current)) {
+        setProcessingPhase(data.current as ProcessingPhase);
+      }
+    });
+
     const unComp = sidecarClient.on("transcription_completed", (data: any) => {
       setIsProcessing(false);
+      setIsCancelling(false);
       setProgress(null);
       loadHistory();
       if (data.history_entry && data.history_entry.id) {
@@ -125,19 +247,31 @@ export function App() {
         setActiveLectureId(data.history_entry.id);
         setActiveWorkspace("note");
       }
+      if (closeAfterCancellationRef.current) void requestNativeClose();
     });
 
-    const unCanc = sidecarClient.on("transcription_cancelled", () => {
+    const unCanc = sidecarClient.on("transcription_cancelled", (data: any) => {
       setIsProcessing(false);
+      setIsCancelling(false);
       setProgress(null);
+      loadHistory();
+      if (data.history_entry?.id) {
+        setActiveEntry(data.history_entry);
+        setActiveLectureId(data.history_entry.id);
+        setActiveWorkspace("note");
+      }
+      if (closeAfterCancellationRef.current) void requestNativeClose();
     });
 
     const unErr = sidecarClient.on("transcription_error", (data: any) => {
       setIsProcessing(false);
+      setIsCancelling(false);
       setErrorText(data.message || "Ошибка во время транскрибации");
+      closeAfterCancellationRef.current = false;
     });
 
     const unAudio = sidecarClient.on("audio_inspected", (meta: AudioMetadata) => {
+      setIsInspectingAudio(false);
       setAudioMetadata(meta);
       if (meta.file_size) setSelectedFileSize(meta.file_size);
       if (meta.file_name) setSelectedFileName(meta.file_name);
@@ -145,6 +279,7 @@ export function App() {
     });
 
     const unAudioFail = sidecarClient.on("audio_inspection_failed", (err: any) => {
+      setIsInspectingAudio(false);
       setErrorText(`Ошибка чтения аудиофайла: ${err.error || "Неподдерживаемый формат"}`);
     });
 
@@ -168,6 +303,8 @@ export function App() {
 
     return () => {
       unProg();
+      unRuntime();
+      unState();
       unComp();
       unCanc();
       unErr();
@@ -225,18 +362,41 @@ export function App() {
       setActiveEntry(entry);
       setActiveLectureId(entry.id);
       setActiveWorkspace("note");
+      setRelinkError(null);
     }
   };
 
   const handleNewFile = () => {
     setActiveWorkspace("new");
+    setActiveEntry(null);
+    setActiveLectureId("");
     setSelectedFilePath(null);
     setSelectedFileName(null);
     setSelectedFileSize(null);
     setAudioMetadata(null);
+    setIsInspectingAudio(false);
     setIsProcessing(false);
+    setIsCancelling(false);
     setProgress(null);
+    setProcessingRuntime(null);
+    setProcessingPhase("loading_model");
     setErrorText(null);
+  };
+
+  const handleOpenHome = () => {
+    if (isProcessing || isInspectingAudio) return;
+    setActiveWorkspace("home");
+    setActiveEntry(null);
+    setActiveLectureId("");
+    setSelectedFilePath(null);
+    setSelectedFileName(null);
+    setSelectedFileSize(null);
+    setAudioMetadata(null);
+    setProgress(null);
+    setProcessingRuntime(null);
+    setErrorText(null);
+    setSearchQuery("");
+    void loadHistory("");
   };
 
   const handleUpdateNoteText = (newText: string) => {
@@ -246,7 +406,14 @@ export function App() {
 
     if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = window.setTimeout(async () => {
-      await sidecarClient.updateHistoryEntry(activeEntry.id, undefined, newText);
+      const updated = await sidecarClient.updateHistoryEntry(activeEntry.id, undefined, newText);
+      setActiveEntry((current) => {
+        if (!current || current.id !== updated.id) return current;
+        // Do not overwrite characters typed while the save request was in flight.
+        return current.current_text === newText
+          ? updated
+          : { ...current, revisions: updated.revisions };
+      });
       setIsAutosaved(true);
       loadHistory(searchQuery);
     }, 600);
@@ -265,7 +432,7 @@ export function App() {
       if (activeEntry?.id === id) {
         setActiveEntry(null);
         setActiveLectureId("");
-        setActiveWorkspace("new");
+        setActiveWorkspace("home");
       }
       await loadHistory(searchQuery);
     } catch (err: any) {
@@ -292,7 +459,19 @@ export function App() {
   };
 
   const handleToggleTheme = () => {
-    setTheme(theme === "dark" ? "light" : "dark");
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    void sidecarClient.updateSettings({ theme: next });
+  };
+
+  const handleThemePreference = (nextTheme: ThemeMode) => {
+    setTheme(nextTheme);
+    void sidecarClient.updateSettings({ theme: nextTheme });
+  };
+
+  const handleReduceMotionPreference = (enabled: boolean) => {
+    setReduceMotion(enabled);
+    void sidecarClient.updateSettings({ reduce_motion: enabled });
   };
 
   const handleToggleDevice = () => {
@@ -306,9 +485,11 @@ export function App() {
     if (typeof fileOrPath === "string") {
       const path = fileOrPath;
       const name = path.split(/[/\\]/).pop() || path;
+      setIsInspectingAudio(true);
       setSelectedFilePath(path);
       setSelectedFileName(name);
       sidecarClient.inspectAudio(path).catch((err: any) => {
+        setIsInspectingAudio(false);
         setErrorText(`Ошибка чтения файла: ${err.message || err}`);
       });
     } else {
@@ -316,12 +497,15 @@ export function App() {
       setSelectedFileName(fileOrPath.name);
       setSelectedFileSize(fileOrPath.size);
       if (fullPath) {
+        setIsInspectingAudio(true);
         setSelectedFilePath(fullPath);
         sidecarClient.inspectAudio(fullPath).catch((err: any) => {
+          setIsInspectingAudio(false);
           setErrorText(`Ошибка чтения файла: ${err.message || err}`);
         });
       } else {
         // Preview mode fallback
+        setIsInspectingAudio(false);
         setSelectedFilePath(null);
         setAudioMetadata({
           file_path: fileOrPath.name,
@@ -334,7 +518,10 @@ export function App() {
     }
   };
 
-  const handleStartTranscription = async () => {
+  const startTranscription = async (
+    deviceOverride?: "auto" | "cuda" | "cpu"
+  ) => {
+    if (isInspectingAudio) return;
     if (!selectedFilePath) {
       const picked = await sidecarClient.pickAudioFile();
       if (picked) {
@@ -353,8 +540,15 @@ export function App() {
     }
 
     setIsProcessing(true);
+    setIsCancelling(false);
     setErrorText(null);
     setProgress(null);
+    setProcessingPhase("loading_model");
+    setProcessingRuntime({
+      modelId: currentModelObj?.model_id || "small",
+      device: deviceOverride ?? devicePreference,
+      deviceLabel: formatDeviceLabel(deviceOverride ?? devicePreference),
+    });
 
     try {
       const modelId = currentModelObj ? currentModelObj.model_id : undefined;
@@ -362,7 +556,7 @@ export function App() {
       await sidecarClient.startTranscription(
         selectedFilePath,
         modelId,
-        devicePreference,
+        deviceOverride ?? devicePreference,
         dictId
       );
     } catch (err: any) {
@@ -371,14 +565,77 @@ export function App() {
     }
   };
 
+  const handleStartTranscription = () => {
+    void startTranscription();
+  };
+
   const handleCancelTranscription = async () => {
+    setIsCancelling(true);
     try {
-      await sidecarClient.cancelTranscription();
+      const result = await sidecarClient.cancelTranscription();
+      if (result.status === "not_running") {
+        setIsProcessing(false);
+        setIsCancelling(false);
+      }
     } catch (e) {
       console.warn("Cancel transcription error:", e);
+      setIsCancelling(false);
     }
-    setIsProcessing(false);
+  };
+
+  const handleStopAndClose = async () => {
+    setIsCloseConfirmOpen(false);
+    closeAfterCancellationRef.current = true;
+    setIsCancelling(true);
+    try {
+      const result = await sidecarClient.cancelTranscription();
+      if (result.status === "not_running") await requestNativeClose();
+    } catch (err: any) {
+      closeAfterCancellationRef.current = false;
+      setIsCancelling(false);
+      setErrorText(err.message || "Не удалось безопасно остановить транскрибацию.");
+    }
+  };
+
+  const handleResumeTranscription = async (entry: HistoryEntry) => {
+    if (!entry.file_path || !entry.file_available) {
+      setErrorText("Исходный аудиофайл не найден. Сначала укажите его новое расположение.");
+      return;
+    }
+    setSelectedFilePath(entry.file_path);
+    setSelectedFileName(entry.file_name);
+    setSelectedFileSize(null);
+    setAudioMetadata(null);
+    setActiveWorkspace("new");
+    setIsProcessing(true);
+    setIsCancelling(false);
+    setErrorText(null);
     setProgress(null);
+    setProcessingPhase("loading_model");
+    setProcessingRuntime({
+      modelId: entry.model_id,
+      device: entry.device,
+      deviceLabel: formatDeviceLabel(entry.device),
+    });
+    try {
+      await sidecarClient.resumeTranscription(entry.id);
+    } catch (err: any) {
+      setIsProcessing(false);
+      setErrorText(err.message || "Не удалось продолжить транскрибацию.");
+    }
+  };
+
+  const handleRelinkAudio = async (entry: HistoryEntry) => {
+    try {
+      setRelinkError(null);
+      const path = await sidecarClient.pickAudioFile();
+      if (!path) return;
+      const updated = await sidecarClient.relinkHistoryAudio(entry.id, path);
+      setActiveEntry(updated);
+      await loadHistory(searchQuery);
+    } catch (err: any) {
+      setRelinkError(err.message || "Не удалось привязать аудиофайл.");
+    }
   };
 
   const handleDownloadModel = async (modelId: string) => {
@@ -434,6 +691,40 @@ export function App() {
     }
   };
 
+  const isRecordContext = activeWorkspace === "note" && activeEntry !== null;
+  const isTopBarLocked = isRecordContext || isProcessing || isInspectingAudio;
+  const topBarModelName = isRecordContext
+    ? formatModelLabel(activeEntry.model_id)
+    : isProcessing && processingRuntime
+      ? formatModelLabel(processingRuntime.modelId)
+      : selectedModelName;
+  const topBarDeviceLabel = isRecordContext
+    ? formatDeviceLabel(activeEntry.device)
+    : isProcessing && processingRuntime
+      ? processingRuntime.deviceLabel
+      : undefined;
+  const topBarDictionaryName = isRecordContext
+    ? activeEntry.dictionary_id === "medical-ru"
+      ? "Медицинский"
+      : activeEntry.dictionary_id || "Без словаря"
+    : selectedDictName;
+  const allHistoryEntries = historyGroups.flatMap((group) => group.entries);
+  const showRightPanel =
+    (activeWorkspace === "note" && activeEntry !== null) ||
+    (activeWorkspace === "new" && selectedFilePath !== null);
+
+  if (!runtimeChecked) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-brand-background text-sm font-medium text-brand-text-secondary dark:bg-dark-background dark:text-dark-text-secondary">
+        Проверяем локальный движок…
+      </div>
+    );
+  }
+
+  if (runtimeStatus && !runtimeStatus.ready) {
+    return <RuntimeSetup status={runtimeStatus} onReady={handleRuntimeReady} />;
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-brand-background dark:bg-dark-background text-brand-text dark:text-dark-text font-sans antialiased">
       {/* 1. Left Column: Full-Height Sidebar (Concept A) */}
@@ -442,13 +733,16 @@ export function App() {
         activeId={activeLectureId}
         searchQuery={searchQuery}
         isNewActive={activeWorkspace === "new"}
+        isHomeActive={activeWorkspace === "home"}
+        homeDisabled={isProcessing || isInspectingAudio}
         onSearchChange={(q) => {
           setSearchQuery(q);
           loadHistory(q);
         }}
         onSelectLecture={handleSelectLecture}
         onNewFile={handleNewFile}
-        onOpenSettings={() => setIsModelsOpen(true)}
+        onOpenHome={handleOpenHome}
+        onOpenSettings={() => setIsPreferencesOpen(true)}
         onOpenOnboarding={() => setIsOnboardingOpen(true)}
         onDeleteEntry={handleDeleteEntry}
         onOpenUpdates={() => setIsUpdateOpen(true)}
@@ -460,32 +754,40 @@ export function App() {
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         {/* TopBar Header (Concept A) */}
         <TopBar
-          modelName={selectedModelName}
+          modelName={topBarModelName}
           devicePreference={devicePreference}
-          dictionaryName={selectedDictName}
+          deviceLabel={topBarDeviceLabel}
+          dictionaryName={topBarDictionaryName}
+          controlsLocked={isTopBarLocked}
+          contextLabel={isRecordContext ? "Параметры этой записи" : "Идёт обработка"}
           theme={theme}
           onOpenModels={() => setIsModelsOpen(true)}
           onOpenDictionaries={() => setIsDictsOpen(true)}
           onToggleDevice={handleToggleDevice}
           onToggleTheme={handleToggleTheme}
           onOpenPrivacyInfo={() => setIsPrivacyOpen(true)}
-          onOpenUpdates={() => setIsUpdateOpen(true)}
-          isUpdateAvailable={isUpdateAvailable}
-          onMinimizeWindow={() => sidecarClient.minimizeWindow()}
-          onMaximizeWindow={() => sidecarClient.maximizeWindow()}
-          onCloseWindow={() => sidecarClient.closeWindow()}
         />
 
         {/* Workspace Note or New Transcription + Right Actions & Timeline */}
         <div className="flex-1 flex min-w-0 overflow-hidden">
           {/* Center Column: Focused Workspace (Note or New Transcription) */}
-          {activeWorkspace === "note" && activeEntry ? (
+          {activeWorkspace === "home" ? (
+            <WorkspaceHome
+              entries={allHistoryEntries}
+              onNewFile={handleNewFile}
+              onOpenEntry={handleSelectLecture}
+            />
+          ) : activeWorkspace === "note" && activeEntry ? (
             <WorkspaceNote
               entry={activeEntry}
               isEditingMode={isEditingMode}
               onUpdateText={handleUpdateNoteText}
               onUpdateTitle={handleUpdateNoteTitle}
               onDeleteEntry={handleDeleteEntry}
+              onResumeTranscription={handleResumeTranscription}
+              onClose={handleOpenHome}
+              onRelinkAudio={handleRelinkAudio}
+              relinkError={relinkError}
             />
           ) : (
             <WorkspaceNew
@@ -493,36 +795,50 @@ export function App() {
               selectedFileName={selectedFileName}
               selectedFileSize={selectedFileSize}
               audioMetadata={audioMetadata}
+              isInspectingAudio={isInspectingAudio}
               isProcessing={isProcessing}
+              isCancelling={isCancelling}
               progress={progress}
+              processingPhase={processingPhase}
+              processingModelLabel={
+                processingRuntime ? formatModelLabel(processingRuntime.modelId) : selectedModelName
+              }
+              processingDeviceLabel={
+                processingRuntime?.deviceLabel || formatDeviceLabel(devicePreference)
+              }
               error={errorText}
               onFileSelected={handleFileSelected}
               onStartTranscription={handleStartTranscription}
               onCancelTranscription={handleCancelTranscription}
               onRetryOnCpu={() => {
                 setDevicePreference("cpu");
-                handleStartTranscription();
+                void startTranscription("cpu");
               }}
             />
           )}
 
           {/* Right Column: Actions, Timeline & Audio Player (Concept A) */}
-          <RightPanel
-            segments={activeEntry?.segments || []}
-            durationFormatted={
-              activeEntry?.duration_formatted ||
-              (audioMetadata?.duration_seconds
-                ? `${Math.floor(audioMetadata.duration_seconds / 60)}:${Math.floor(audioMetadata.duration_seconds % 60).toString().padStart(2, "0")}`
-                : "00:00")
-            }
-            audioPath={activeEntry?.file_path || selectedFilePath || undefined}
-            waveform={activeEntry?.waveform || audioMetadata?.waveform || undefined}
-            onCopyText={handleCopyText}
-            onExportText={handleExportText}
-            isAutosaved={isAutosaved}
-            isEditingMode={isEditingMode}
-            onToggleEditingMode={setIsEditingMode}
-          />
+          {showRightPanel && (
+            <RightPanel
+              segments={activeEntry?.segments || []}
+              durationFormatted={
+                activeEntry?.duration_formatted ||
+                (audioMetadata?.duration_seconds
+                  ? `${Math.floor(audioMetadata.duration_seconds / 60)}:${Math.floor(audioMetadata.duration_seconds % 60).toString().padStart(2, "0")}`
+                  : "00:00")
+              }
+              audioPath={activeEntry?.file_path || selectedFilePath || undefined}
+              waveform={activeEntry?.waveform || audioMetadata?.waveform || undefined}
+              onCopyText={handleCopyText}
+              onExportText={handleExportText}
+              isAutosaved={isAutosaved}
+              isEditingMode={isEditingMode}
+              onToggleEditingMode={setIsEditingMode}
+              hasTranscript={activeEntry !== null}
+              audioAvailable={activeEntry?.file_available ?? true}
+              onRelinkAudio={activeEntry ? () => void handleRelinkAudio(activeEntry) : undefined}
+            />
+          )}
         </div>
       </div>
 
@@ -531,9 +847,9 @@ export function App() {
         isOpen={isModelsOpen}
         onClose={() => setIsModelsOpen(false)}
         models={models}
-        onSelectModel={(id) => {
-          sidecarClient.selectModel(id);
-          loadModels();
+        onSelectModel={async (id) => {
+          await sidecarClient.selectModel(id);
+          await loadModels();
         }}
         onDownloadModel={handleDownloadModel}
         onRemoveModel={handleRemoveModel}
@@ -545,9 +861,9 @@ export function App() {
         isOpen={isDictsOpen}
         onClose={() => setIsDictsOpen(false)}
         dictionaries={dictionaries}
-        onSelectDictionary={(id) => {
-          sidecarClient.selectDictionary(id);
-          loadDictionaries();
+        onSelectDictionary={async (id) => {
+          await sidecarClient.selectDictionary(id);
+          await loadDictionaries();
         }}
         onImportCustomDictionary={handleImportCustomDictionary}
         onRemoveCustomDictionary={handleRemoveCustomDictionary}
@@ -570,6 +886,42 @@ export function App() {
         onClose={() => setIsUpdateOpen(false)}
         currentVersion={appVersion}
       />
+
+      <PreferencesModal
+        isOpen={isPreferencesOpen}
+        onClose={() => setIsPreferencesOpen(false)}
+        theme={theme}
+        reduceMotion={reduceMotion}
+        onChangeTheme={handleThemePreference}
+        onChangeReduceMotion={handleReduceMotionPreference}
+        onOpenModels={() => {
+          setIsPreferencesOpen(false);
+          setIsModelsOpen(true);
+        }}
+        onOpenDictionaries={() => {
+          setIsPreferencesOpen(false);
+          setIsDictsOpen(true);
+        }}
+      />
+
+      {isCloseConfirmOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="close-confirm-title">
+          <div className="w-full max-w-md rounded-2xl border border-brand-border bg-brand-surface p-5 shadow-card dark:border-dark-border dark:bg-dark-surface">
+            <h2 id="close-confirm-title" className="text-base font-bold">Транскрибация ещё выполняется</h2>
+            <p className="mt-2 text-sm leading-relaxed text-brand-text-secondary dark:text-dark-text-secondary">
+              Остановить обработку, сохранить уже распознанный текст и закрыть VoxNote?
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setIsCloseConfirmOpen(false)} className="rounded-lg border border-brand-border px-3 py-2 text-xs font-semibold hover:bg-black/5 dark:border-dark-border dark:hover:bg-white/5">
+                Остаться
+              </button>
+              <button type="button" onClick={() => void handleStopAndClose()} className="rounded-lg bg-brand-danger px-3 py-2 text-xs font-semibold text-white hover:opacity-90">
+                Остановить и закрыть
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

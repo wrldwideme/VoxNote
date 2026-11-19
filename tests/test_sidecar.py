@@ -5,6 +5,7 @@ import io
 import json
 from contextlib import suppress
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from voxnote.domain.models import (
     TranscriptionResult,
     TranscriptSegment,
 )
+from voxnote.domain.state import AppState
 from voxnote.services.device import DeviceError
 from voxnote.services.dictionary import LocalDictionaryManager
 from voxnote.services.history import LocalHistoryStore
@@ -48,6 +50,7 @@ class FakePreparedService:
     ) -> None:
         self.result_text = result_text
         self.device_label = device_label
+        self.device_name = "cuda" if device_label.lower() == "cuda" else "cpu"
         self.fail = fail
         self.fail_device = fail_device
 
@@ -309,7 +312,14 @@ def test_sidecar_transcription_full_lifecycle(temp_environment: dict[str, Any]) 
     assert service._transcription_task is not None
     service._transcription_task.future.result(timeout=3.0)
 
-    # Check emitted events: state_changed, transcription_progress, transcription_completed
+    # Check emitted events: runtime selection, progress and completion.
+    runtime_events = [e for e in events if e[0] == "transcription_runtime_selected"]
+    assert runtime_events == [
+        (
+            "transcription_runtime_selected",
+            {"model_id": "small", "device": "cpu", "device_label": "CPU"},
+        )
+    ]
     completed_events = [e for e in events if e[0] == "transcription_completed"]
     assert len(completed_events) == 1
     comp_payload = completed_events[0][1]
@@ -322,6 +332,277 @@ def test_sidecar_transcription_full_lifecycle(temp_environment: dict[str, Any]) 
     assert history["total_count"] == 1
     assert history["entries"][0]["text"] == "Тестовая расшифровка лекции"
     assert len(history["entries"][0]["segments"]) == 2
+
+
+def test_audio_inspected_is_emitted_after_inspection_task_is_released(
+    temp_environment: dict[str, Any],
+) -> None:
+    busy_when_emitted: list[bool] = []
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: FakePreparedService(),
+        audio_service=temp_environment["audio_service"],
+    )
+    service.set_event_sink(
+        lambda method, _params: (
+            busy_when_emitted.append(service._is_busy()) if method == "audio_inspected" else None
+        )
+    )
+
+    service.inspect_audio(str(temp_environment["audio_file"]))
+    if service._audio_task is not None:
+        service._audio_task.future.result(timeout=2.0)
+
+    assert busy_when_emitted == [False]
+
+
+def test_sidecar_runs_two_transcriptions_in_one_session(
+    temp_environment: dict[str, Any],
+) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: FakePreparedService(),
+        history_store=temp_environment["history_store"],
+        event_sink=lambda method, params: events.append((method, params)),
+    )
+
+    for _ in range(2):
+        service.start_transcription(file_path=str(temp_environment["audio_file"]))
+        assert service._transcription_task is not None
+        service._transcription_task.future.result(timeout=2.0)
+
+    completed = [event for event in events if event[0] == "transcription_completed"]
+    assert len(completed) == 2
+
+
+def test_sidecar_accepts_next_job_from_completion_event(
+    temp_environment: dict[str, Any],
+) -> None:
+    completed_count = 0
+    start_errors: list[Exception] = []
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: FakePreparedService(),
+    )
+
+    def handle_event(method: str, _params: dict[str, Any]) -> None:
+        nonlocal completed_count
+        if method != "transcription_completed":
+            return
+        completed_count += 1
+        if completed_count == 1:
+            try:
+                service.start_transcription(file_path=str(temp_environment["audio_file"]))
+            except Exception as error:
+                start_errors.append(error)
+
+    service.set_event_sink(handle_event)
+    service.start_transcription(file_path=str(temp_environment["audio_file"]))
+
+    deadline = 2.0
+    while completed_count < 2 and deadline > 0:
+        sleep(0.01)
+        deadline -= 0.01
+
+    assert start_errors == []
+    assert completed_count == 2
+
+
+def test_sidecar_saves_and_resumes_partial_transcription(
+    temp_environment: dict[str, Any],
+) -> None:
+    calls = 0
+
+    class ResumablePreparedService:
+        device_label = "cuda"
+
+        def prepare(self, cancellation: CancellationToken) -> bool:
+            return not cancellation.is_cancelled
+
+        def transcribe(
+            self,
+            job: TranscriptionJob,
+            cancellation: CancellationToken,
+            on_progress: Any,
+        ) -> TranscriptionResult:
+            nonlocal calls
+            del cancellation
+            calls += 1
+            if calls == 1:
+                on_progress(ProgressSnapshot(10.0, 20.0, 1.0))
+                return TranscriptionResult(
+                    text="Первая часть.",
+                    model_id=job.model_id,
+                    device="cuda",
+                    incomplete=True,
+                    segments=(TranscriptSegment(0.0, 10.0, "Первая часть."),),
+                )
+            assert job.resume_from_seconds == 10.0
+            on_progress(ProgressSnapshot(20.0, 20.0, 1.0))
+            return TranscriptionResult(
+                text="Вторая часть.",
+                model_id=job.model_id,
+                device="cuda",
+                segments=(TranscriptSegment(10.0, 20.0, "Вторая часть."),),
+            )
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: ResumablePreparedService(),
+        history_store=temp_environment["history_store"],
+        audio_service=temp_environment["audio_service"],
+        event_sink=lambda method, params: events.append((method, params)),
+    )
+
+    service.start_transcription(file_path=str(temp_environment["audio_file"]))
+    assert service._transcription_task is not None
+    service._transcription_task.future.result(timeout=2.0)
+    cancelled = [params for method, params in events if method == "transcription_cancelled"]
+    assert len(cancelled) == 1
+    partial_entry = cancelled[0]["history_entry"]
+    assert partial_entry["status"] == "cancelled"
+    assert partial_entry["resume_from_seconds"] == 10.0
+
+    service.resume_transcription(partial_entry["id"])
+    assert service._transcription_task is not None
+    service._transcription_task.future.result(timeout=2.0)
+
+    entries = service.get_history()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["id"] == partial_entry["id"]
+    assert entries[0]["status"] == "completed"
+    assert entries[0]["text"] == "Первая часть. Вторая часть."
+    assert [segment["start"] for segment in entries[0]["segments"]] == [0.0, 10.0]
+
+
+def test_sidecar_checkpoints_partial_text_before_worker_failure(
+    temp_environment: dict[str, Any],
+) -> None:
+    class FailingPreparedService:
+        device_label = "CPU"
+        device_name = "cpu"
+
+        def prepare(self, cancellation: CancellationToken) -> bool:
+            return not cancellation.is_cancelled
+
+        def transcribe(
+            self,
+            job: TranscriptionJob,
+            cancellation: CancellationToken,
+            on_progress: Any,
+        ) -> TranscriptionResult:
+            del job, cancellation
+            segment = TranscriptSegment(0.0, 12.0, "Сохранённый фрагмент.")
+            on_progress(
+                ProgressSnapshot(
+                    12.0,
+                    20.0,
+                    1.0,
+                    partial_segments=(segment,),
+                )
+            )
+            raise RuntimeError("worker crashed")
+
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: FailingPreparedService(),
+        history_store=temp_environment["history_store"],
+        audio_service=temp_environment["audio_service"],
+    )
+
+    service.start_transcription(file_path=str(temp_environment["audio_file"]))
+    assert service._transcription_task is not None
+    with pytest.raises(RuntimeError, match="worker crashed"):
+        service._transcription_task.future.result(timeout=2.0)
+
+    entries = service.get_history()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["status"] == "interrupted"
+    assert entries[0]["text"] == "Сохранённый фрагмент."
+    assert entries[0]["resume_from_seconds"] == 12.0
+
+
+def test_sidecar_finalizes_empty_transcription_after_vad(
+    temp_environment: dict[str, Any],
+) -> None:
+    class SilentPreparedService:
+        device_label = "CPU"
+
+        def prepare(self, cancellation: CancellationToken) -> bool:
+            return not cancellation.is_cancelled
+
+        def transcribe(
+            self,
+            job: TranscriptionJob,
+            cancellation: CancellationToken,
+            on_progress: Any,
+        ) -> TranscriptionResult:
+            del cancellation, on_progress
+            return TranscriptionResult(
+                text="",
+                model_id=job.model_id,
+                device="cpu",
+                dictionary_id=job.dictionary_id,
+            )
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: SilentPreparedService(),
+        history_store=temp_environment["history_store"],
+        audio_service=temp_environment["audio_service"],
+        event_sink=lambda method, params: events.append((method, params)),
+    )
+
+    service.inspect_audio(str(temp_environment["audio_file"]))
+    if service._audio_task is not None:
+        service._audio_task.future.result(timeout=2.0)
+    service.start_transcription()
+    assert service._transcription_task is not None
+    result = service._transcription_task.future.result(timeout=2.0)
+
+    assert result.text == ""
+    assert result.incomplete is False
+    completed = [params for method, params in events if method == "transcription_completed"]
+    assert len(completed) == 1
+    assert completed[0]["text"] == ""
+    assert completed[0]["history_entry"]["current_text"] == ""
+    assert service._controller.state_machine.state is AppState.COMPLETED
+
+
+def test_sidecar_completion_survives_diagnostics_failure(
+    temp_environment: dict[str, Any],
+) -> None:
+    class FailingDiagnostics:
+        def record(self, event: str, **fields: object) -> None:
+            del event, fields
+            raise RuntimeError("diagnostics unavailable")
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: FakePreparedService(),
+        history_store=temp_environment["history_store"],
+        diagnostics=FailingDiagnostics(),  # type: ignore[arg-type]
+        event_sink=lambda method, params: events.append((method, params)),
+    )
+
+    service.start_transcription(file_path=str(temp_environment["audio_file"]))
+    assert service._transcription_task is not None
+    result = service._transcription_task.future.result(timeout=2.0)
+
+    assert result.incomplete is False
+    assert service._controller.state_machine.state is AppState.COMPLETED
+    assert len([event for event in events if event[0] == "transcription_completed"]) == 1
 
 
 def test_sidecar_transcription_accepts_device_parameter(temp_environment: dict[str, Any]) -> None:
@@ -490,6 +771,64 @@ def test_sidecar_dictionary_import_and_selection(
 
     rem_res = service.remove_custom_dictionary()
     assert rem_res["status"] == "removed"
+
+
+def test_sidecar_validates_audio_duration_before_relink(
+    temp_environment: dict[str, Any],
+) -> None:
+    class RelinkAudioService:
+        duration = 20.0
+
+        def inspect(self, path: Path, cancellation: CancellationToken) -> AudioMetadata:
+            del path, cancellation
+            return AudioMetadata(
+                duration_seconds=self.duration,
+                sample_rate=16000,
+                channels=1,
+                codec="pcm_s16le",
+                waveform=(0.1, 0.2),
+            )
+
+    audio_service = RelinkAudioService()
+    store = temp_environment["history_store"]
+    test_root = temp_environment["audio_file"].parent
+    entry = store.add_entry(
+        file_name="old.wav",
+        duration_seconds=20.0,
+        model_id="small",
+        device="cpu",
+        dictionary_id=None,
+        text="Текст остаётся доступен.",
+        file_path=str(test_root / "missing.wav"),
+    )
+    service = SidecarService(
+        temp_environment["controller"],
+        model_path=temp_environment["model_dir"],
+        service_factory=lambda _path, _preference: FakePreparedService(),
+        history_store=store,
+        audio_service=audio_service,
+    )
+    matching = test_root / "moved.wav"
+    matching.write_bytes(b"audio")
+
+    relinked = service.relink_history_audio(entry.id, str(matching))
+    assert relinked["file_available"] is True
+    assert relinked["file_path"] == str(matching.resolve())
+
+    other_entry = store.add_entry(
+        file_name="other.wav",
+        duration_seconds=20.0,
+        model_id="small",
+        device="cpu",
+        dictionary_id=None,
+        text="Другой текст.",
+    )
+    wrong = test_root / "wrong.wav"
+    wrong.write_bytes(b"other")
+    audio_service.duration = 90.0
+
+    with pytest.raises(SidecarServiceError, match="длительность не совпадает"):
+        service.relink_history_audio(other_entry.id, str(wrong))
 
 
 def test_sidecar_transcription_cancellation(temp_environment: dict[str, Any]) -> None:

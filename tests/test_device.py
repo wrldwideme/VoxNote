@@ -82,6 +82,44 @@ def test_detector_handles_missing_cuda() -> None:
     assert "не обнаружена" in (capabilities.unavailable_reason or "")
 
 
+def test_packaged_cpu_runtime_does_not_offer_cuda_without_accelerator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOXNOTE_PACKAGED_RUNTIME", "1")
+    monkeypatch.setenv("VOXNOTE_NVIDIA_ACCELERATOR_AVAILABLE", "0")
+    detector_was_called = False
+
+    def cuda_count() -> int:
+        nonlocal detector_was_called
+        detector_was_called = True
+        return 1
+
+    capabilities = CTranslate2DeviceDetector(
+        cuda_count=cuda_count,
+        compute_types=lambda _device: {"float16"},
+        gpu_details=lambda: ("NVIDIA GeForce RTX 4060", 8_188),
+    ).detect()
+
+    assert capabilities.cuda_available is False
+    assert capabilities.unavailable_reason == "пакет ускорения NVIDIA не установлен"
+    assert detector_was_called is False
+
+
+def test_packaged_nvidia_runtime_detects_cuda_when_accelerator_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOXNOTE_PACKAGED_RUNTIME", "1")
+    monkeypatch.setenv("VOXNOTE_NVIDIA_ACCELERATOR_AVAILABLE", "1")
+
+    capabilities = CTranslate2DeviceDetector(
+        cuda_count=lambda: 1,
+        compute_types=lambda _device: {"float16"},
+        gpu_details=lambda: ("NVIDIA GeForce RTX 4060", 8_188),
+    ).detect()
+
+    assert capabilities.cuda_available is True
+
+
 def test_selector_prefers_float16_and_warns_about_low_vram() -> None:
     selection = DeviceSelector(gpu_capabilities(memory_mb=4_096)).select("auto", "large-v3")
 

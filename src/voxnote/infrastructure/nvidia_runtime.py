@@ -16,6 +16,14 @@ _REGISTERED_PATHS: set[Path] = set()
 def discover_nvidia_dll_directories() -> tuple[Path, ...]:
     directories: list[Path] = []
 
+    # The slim desktop shell installs CUDA as an independent, versioned pack
+    # and points the sidecar at it before Python imports CTranslate2.
+    accelerator_dir = os.environ.get("VOXNOTE_ACCELERATOR_DIR")
+    if accelerator_dir:
+        candidate = Path(accelerator_dir)
+        if candidate.is_dir():
+            directories.append(candidate.resolve())
+
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
         for candidate in (exe_dir, exe_dir / "_internal", exe_dir / "nvidia"):

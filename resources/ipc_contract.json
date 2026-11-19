@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "methods": {
+    "ping": { "required": [], "optional": [] },
+    "get_system_info": { "required": [], "optional": [] },
+    "update_settings": {
+      "required": [],
+      "optional": ["theme", "reduce_motion", "device_preference", "selected_model", "selected_dictionary"]
+    },
+    "inspect_audio": { "required": ["file_path"], "optional": [] },
+    "start_transcription": {
+      "required": ["file_path"],
+      "optional": ["model_id", "device_preference", "dictionary_id", "resume_entry_id"]
+    },
+    "cancel_transcription": { "required": [], "optional": [] },
+    "resume_transcription": { "required": ["entry_id"], "optional": [] },
+    "get_models": { "required": [], "optional": [] },
+    "get_models_directory": { "required": [], "optional": [] },
+    "set_models_directory": { "required": ["path"], "optional": [] },
+    "select_model": { "required": ["model_id"], "optional": [] },
+    "download_model": { "required": ["model_id"], "optional": [] },
+    "cancel_download": { "required": ["model_id"], "optional": [] },
+    "remove_model": { "required": ["model_id"], "optional": [] },
+    "get_dictionaries": { "required": [], "optional": [] },
+    "select_dictionary": { "required": ["dictionary_id"], "optional": [] },
+    "import_custom_dictionary": { "required": ["file_path"], "optional": [] },
+    "remove_custom_dictionary": { "required": [], "optional": [] },
+    "get_history": { "required": [], "optional": ["search_query"] },
+    "get_history_entry": { "required": ["entry_id"], "optional": [] },
+    "update_history_entry": {
+      "required": ["entry_id"],
+      "optional": ["title", "edited_text"]
+    },
+    "relink_history_audio": {
+      "required": ["entry_id", "file_path"],
+      "optional": []
+    },
+    "remove_history_entry": { "required": ["entry_id"], "optional": [] },
+    "clear_history": { "required": [], "optional": [] },
+    "export_text": {
+      "required": ["entry_id", "target_file_path"],
+      "optional": []
+    },
+    "copy_diagnostics": { "required": [], "optional": [] }
+  },
+  "events": [
+    "state_changed",
+    "audio_inspected",
+    "audio_inspection_failed",
+    "transcription_progress",
+    "transcription_runtime_selected",
+    "transcription_completed",
+    "transcription_cancelled",
+    "transcription_error",
+    "model_download_progress",
+    "model_download_finished",
+    "model_download_cancelled",
+    "model_download_failed"
+  ]
+}

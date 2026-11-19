@@ -48,7 +48,6 @@ hiddenimports = [
     "voxnote.infrastructure.faster_whisper_adapter",
     "voxnote.infrastructure.nvidia_runtime",
     "voxnote.infrastructure.device_routing",
-    "voxnote.services.controller",
     "voxnote.services.dictionary",
     "voxnote.services.history",
     "voxnote.services.model_manager",

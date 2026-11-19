@@ -32,3 +32,15 @@ def test_discover_nvidia_dll_directories_handles_missing_packages(monkeypatch) -
     # Should safely return a tuple without raising ModuleNotFoundError or ImportError
     directories = discover_nvidia_dll_directories()
     assert isinstance(directories, tuple)
+
+
+def test_discovers_shared_accelerator_directory_first(tmp_path: Path, monkeypatch) -> None:
+    from voxnote.infrastructure.nvidia_runtime import discover_nvidia_dll_directories
+
+    accelerator = tmp_path / "runtime" / "nvidia-1.0.0"
+    accelerator.mkdir(parents=True)
+    monkeypatch.setenv("VOXNOTE_ACCELERATOR_DIR", str(accelerator))
+
+    directories = discover_nvidia_dll_directories()
+
+    assert directories[0] == accelerator.resolve()

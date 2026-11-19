@@ -7,9 +7,12 @@ export interface SidebarProps {
   activeId: string | null;
   searchQuery: string;
   isNewActive: boolean;
+  isHomeActive: boolean;
+  homeDisabled?: boolean;
   onSearchChange: (q: string) => void;
   onSelectLecture: (id: string) => void;
   onNewFile: () => void;
+  onOpenHome: () => void;
   onOpenSettings: () => void;
   onOpenOnboarding?: () => void;
   onDeleteEntry?: (id: string) => void;
@@ -23,9 +26,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeId,
   searchQuery,
   isNewActive,
+  isHomeActive,
+  homeDisabled = false,
   onSearchChange,
   onSelectLecture,
   onNewFile,
+  onOpenHome,
   onOpenSettings,
   onOpenOnboarding,
   onDeleteEntry,
@@ -38,14 +44,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Top Section: Logo, Search & New File Button */}
       <div className="p-4 border-b border-brand-border/60 dark:border-dark-border/60 space-y-3.5">
         {/* Brand Logo (matching Concept A mock) */}
-        <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={onOpenHome}
+          disabled={homeDisabled}
+          className={`flex items-center gap-2.5 rounded-lg text-left ${homeDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:opacity-80"}`}
+          title={homeDisabled ? "Дождитесь завершения текущей операции" : "На главный экран"}
+          aria-current={isHomeActive ? "page" : undefined}
+        >
           <div className="w-7 h-7 rounded-lg bg-brand-primary flex items-center justify-center text-white shadow-subtle">
             <AudioLines size={16} />
           </div>
           <span className="text-base font-bold tracking-tight text-brand-text dark:text-dark-text">
             VoxNote
           </span>
-        </div>
+        </button>
 
         {/* Search Input with Ctrl+K shortcut */}
         <div className="relative flex items-center">
@@ -53,7 +66,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <input
             ref={searchInputRef as any}
             type="text"
-            placeholder="Поиск по лекциям..."
+            placeholder="Поиск по записям и тексту..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             className="w-full pl-8 pr-12 py-1.5 text-xs bg-brand-background dark:bg-dark-background border border-brand-border dark:border-dark-border rounded-lg text-brand-text dark:text-dark-text placeholder:text-brand-text-secondary/70 focus:outline-none focus:border-brand-primary transition-colors"
@@ -96,7 +109,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               {group.entries.map((entry) => {
-                const isSelected = !isNewActive && entry.id === activeId;
+                const isSelected = !isHomeActive && !isNewActive && entry.id === activeId;
                 return (
                   <div
                     key={entry.id}
@@ -125,6 +138,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <div className="text-[10px] text-brand-text-secondary dark:text-dark-text-secondary truncate mt-0.5">
                           {entry.created_at} · {entry.duration_formatted}
                         </div>
+                        {(entry.status === "cancelled" || entry.status === "interrupted") && (
+                          <div className="mt-1 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                            {entry.status === "interrupted" ? "Прервана" : "Остановлено"}
+                          </div>
+                        )}
                       </div>
                     </div>
 

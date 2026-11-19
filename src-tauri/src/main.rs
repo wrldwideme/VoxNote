@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod runtime_manager;
+
+use runtime_manager::{ResolvedSidecar, RuntimeInstallState, RuntimeStatus};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter, State, Window};
@@ -17,6 +20,7 @@ struct SidecarProcess {
 
 struct AppState {
     sidecar: Arc<Mutex<SidecarProcess>>,
+    runtime_install: Arc<Mutex<RuntimeInstallState>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -25,47 +29,44 @@ struct SidecarStatus {
     executable: String,
 }
 
-/// Find Python executable or packaged voxnote-sidecar.exe
-fn resolve_sidecar_command() -> (PathBuf, Vec<String>) {
-    // 1. Check if packaged binary voxnote-sidecar.exe exists in current or sub-directories
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            let candidates = [
-                parent.join("voxnote-sidecar.exe"),
-                parent.join("voxnote-sidecar").join("voxnote-sidecar.exe"),
-                parent.join("binaries").join("voxnote-sidecar.exe"),
-                parent.join("binaries").join("voxnote-sidecar").join("voxnote-sidecar.exe"),
-                parent.join("resources").join("voxnote-sidecar.exe"),
-                parent.join("resources").join("binaries").join("voxnote-sidecar.exe"),
-                parent.join("resources").join("binaries").join("voxnote-sidecar").join("voxnote-sidecar.exe"),
-            ];
-            for candidate in candidates {
-                if candidate.exists() {
-                    return (candidate, vec![]);
-                }
-            }
-        }
-    }
-
-    // 2. Check virtual environment python in project root (.venv)
-    let venv_python = PathBuf::from(".venv\\Scripts\\python.exe");
-    if venv_python.exists() {
-        return (venv_python, vec!["-m".to_string(), "voxnote.sidecar".to_string()]);
-    }
-
-    // 3. Fall back to standard python on PATH
-    (PathBuf::from("python"), vec!["-m".to_string(), "voxnote.sidecar".to_string()])
-}
-
 fn spawn_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
-    let (program, args) = resolve_sidecar_command();
-    eprintln!("[VoxNote Rust Supervisor] Spawning sidecar: {:?} with args {:?}", program, args);
+    if state_arc.lock().map(|state| state.is_running).unwrap_or(false) {
+        return;
+    }
+    let Some(ResolvedSidecar {
+        program,
+        args,
+        accelerator_dir,
+        source,
+    }) = runtime_manager::resolve_sidecar_command()
+    else {
+        eprintln!("[VoxNote Rust Supervisor] Runtime is not installed.");
+        let _ = app_handle.emit("runtime-required", true);
+        return;
+    };
+    eprintln!("[VoxNote Rust Supervisor] Spawning sidecar from {source}: {:?}", program);
 
     let mut cmd = Command::new(&program);
     cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if matches!(source.as_str(), "portable" | "shared") {
+        cmd.env("VOXNOTE_PACKAGED_RUNTIME", "1");
+        cmd.env(
+            "VOXNOTE_NVIDIA_ACCELERATOR_AVAILABLE",
+            if accelerator_dir.is_some() { "1" } else { "0" },
+        );
+    }
+    if let Some(accelerator_dir) = accelerator_dir {
+        let current_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![accelerator_dir.clone()];
+        paths.extend(std::env::split_paths(&current_path));
+        if let Ok(joined) = std::env::join_paths(paths) {
+            cmd.env("PATH", joined);
+        }
+        cmd.env("VOXNOTE_ACCELERATOR_DIR", accelerator_dir);
+    }
 
     #[cfg(windows)]
     {
@@ -154,11 +155,61 @@ fn send_to_sidecar(state: State<AppState>, message: String) -> Result<(), String
 #[tauri::command]
 fn get_sidecar_status(state: State<AppState>) -> Result<SidecarStatus, String> {
     let guard = state.sidecar.lock().map_err(|e| e.to_string())?;
-    let (program, _) = resolve_sidecar_command();
+    let executable = runtime_manager::resolve_sidecar_command()
+        .map(|resolved| resolved.program.to_string_lossy().to_string())
+        .unwrap_or_default();
     Ok(SidecarStatus {
         running: guard.is_running,
-        executable: program.to_string_lossy().to_string(),
+        executable,
     })
+}
+
+#[tauri::command]
+fn get_runtime_status(state: State<AppState>) -> Result<RuntimeStatus, String> {
+    Ok(runtime_manager::get_status(&state.runtime_install))
+}
+
+#[tauri::command]
+fn install_runtime(app: AppHandle, state: State<AppState>, profile: String) -> Result<(), String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut install = state.runtime_install.lock().map_err(|err| err.to_string())?;
+        if install.installing {
+            return Err("Установка runtime уже выполняется.".to_string());
+        }
+        install.installing = true;
+        install.cancel = Some(cancel.clone());
+    }
+
+    let runtime_state = state.runtime_install.clone();
+    let sidecar_state = state.sidecar.clone();
+    thread::spawn(move || {
+        let result = runtime_manager::install_profile(&app, &profile, cancel);
+        if let Ok(mut install) = runtime_state.lock() {
+            install.installing = false;
+            install.cancel = None;
+        }
+        match result {
+            Ok(()) => {
+                spawn_sidecar(app.clone(), sidecar_state);
+                let status = runtime_manager::get_status(&runtime_state);
+                let _ = app.emit("runtime-install-finished", status);
+            }
+            Err(error) => {
+                let _ = app.emit("runtime-install-failed", error);
+            }
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_runtime_install(state: State<AppState>) -> Result<(), String> {
+    let install = state.runtime_install.lock().map_err(|err| err.to_string())?;
+    if let Some(cancel) = &install.cancel {
+        cancel.store(true, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -206,17 +257,24 @@ fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
 
 fn main() {
     let sidecar_state = Arc::new(Mutex::new(SidecarProcess::default()));
+    let runtime_install_state = Arc::new(Mutex::new(RuntimeInstallState::default()));
     let sidecar_for_setup = sidecar_state.clone();
     let sidecar_for_exit = sidecar_state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             sidecar: sidecar_state,
+            runtime_install: runtime_install_state,
         })
         .invoke_handler(tauri::generate_handler![
             send_to_sidecar,
             get_sidecar_status,
+            get_runtime_status,
+            install_runtime,
+            cancel_runtime_install,
             pick_audio_file,
             pick_dictionary_file,
             minimize_window,

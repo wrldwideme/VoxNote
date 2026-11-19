@@ -18,6 +18,11 @@ export interface TranscriptSegment {
   text: string;
 }
 
+export interface HistoryRevision {
+  created_at: string;
+  text: string;
+}
+
 export interface HistoryEntry {
   id: string;
   created_at: string;
@@ -37,6 +42,10 @@ export interface HistoryEntry {
   segments: TranscriptSegment[];
   file_path?: string;
   waveform?: number[];
+  status: "completed" | "cancelled" | "interrupted" | "in_progress";
+  resume_from_seconds: number;
+  file_available: boolean;
+  revisions: HistoryRevision[];
 }
 
 export interface HistoryGroup {

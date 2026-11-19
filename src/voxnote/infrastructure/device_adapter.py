@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable
 from importlib import import_module
@@ -26,6 +27,14 @@ class CTranslate2DeviceDetector:
 
     def detect(self) -> DeviceCapabilities:
         try:
+            if (
+                os.environ.get("VOXNOTE_PACKAGED_RUNTIME") == "1"
+                and os.environ.get("VOXNOTE_NVIDIA_ACCELERATOR_AVAILABLE") != "1"
+            ):
+                return DeviceCapabilities(
+                    cuda_available=False,
+                    unavailable_reason="пакет ускорения NVIDIA не установлен",
+                )
             register_nvidia_dll_directories()
             cuda_count = self._cuda_count or self._default_cuda_count
             compute_types = self._compute_types or self._default_compute_types

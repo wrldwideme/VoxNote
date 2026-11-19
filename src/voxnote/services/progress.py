@@ -80,7 +80,10 @@ class ProgressEstimator:
                 current_rate = delta_processed / delta_elapsed
                 typical_rate = median(rates)
                 ratio = current_rate / typical_rate if typical_rate > 0 else 1.0
-                if ratio > 4.0 or ratio < 0.25:
+                # A large forward jump is normally VAD skipping silence, not a
+                # permanent speed change. Keeping earlier samples lets the median
+                # absorb that spike instead of resetting ETA forever on long audio.
+                if ratio < 0.25:
                     previous = self._samples[-1]
                     self._samples.clear()
                     self._samples.append(previous)
@@ -93,9 +96,12 @@ class ProgressEstimator:
         if percent < self._minimum_eta_percent:
             return None
         rates = self._rates()
-        if len(rates) < 3:
-            return None
-        rate = median(rates)
+        if len(rates) >= 3:
+            rate = median(rates)
+        else:
+            # Sparse segment events still contain a reliable cumulative baseline
+            # from the start of inference. Discount it to avoid optimistic ETAs.
+            rate = processed / elapsed * 0.8 if elapsed > 0 else 0.0
         if rate <= 0:
             return None
         return max(0.0, (total - processed) / rate)

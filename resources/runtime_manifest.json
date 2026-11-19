@@ -1,0 +1,16 @@
+{
+    "schema_version":  1,
+    "runtime_version":  "1.0.0",
+    "packages":  {
+                     "core":  {
+                                  "url":  "https://github.com/wrldwideme/VoxNote/releases/download/runtime-v1.0.0/voxnote-runtime-core-1.0.0-windows-x64.zip",
+                                  "sha256":  "bfb82fbbc1478f5006453b839039dcd573d0b009807bd8d92086ddd8fe0c0313",
+                                  "size_bytes":  92512295
+                              },
+                     "nvidia":  {
+                                    "url":  "https://github.com/wrldwideme/VoxNote/releases/download/runtime-v1.0.0/voxnote-runtime-nvidia-1.0.0-windows-x64.zip",
+                                    "sha256":  "121cce2a7e8d1239e954ce231aca3ddc14a07226a440afd3a6bc7da25025fabc",
+                                    "size_bytes":  699790401
+                                }
+                 }
+}

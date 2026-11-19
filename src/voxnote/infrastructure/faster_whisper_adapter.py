@@ -26,6 +26,7 @@ class SegmentLike(Protocol):
 
 class TranscriptionInfoLike(Protocol):
     duration: float
+    duration_after_vad: float
 
 
 class WhisperModelLike(Protocol):
@@ -37,6 +38,9 @@ class WhisperModelLike(Protocol):
         task: str,
         beam_size: int,
         vad_filter: bool,
+        condition_on_previous_text: bool = True,
+        max_new_tokens: int | None = None,
+        clip_timestamps: str | None = None,
         initial_prompt: str | None = None,
         hotwords: str | None = None,
     ) -> tuple[Iterable[SegmentLike], TranscriptionInfoLike]: ...
@@ -53,13 +57,10 @@ class FasterWhisperTranscriptionService:
         model_factory: ModelFactory,
         *,
         device_name: str,
-        warmup: bool = False,
         dictionary_manager: DictionaryManager | None = None,
     ) -> None:
         self._model_factory = model_factory
         self._device_name = device_name
-        self._warmup = warmup
-        self._warmed_up = False
         self._model: WhisperModelLike | None = None
         self._dictionary_manager = dictionary_manager
 
@@ -85,7 +86,6 @@ class FasterWhisperTranscriptionService:
         return cls(
             factory,
             device_name=device,
-            warmup=device == "cuda",
             dictionary_manager=dictionary_manager,
         )
 
@@ -95,20 +95,10 @@ class FasterWhisperTranscriptionService:
         return self._model
 
     def prepare(self, cancellation: CancellationToken) -> bool:
-        """Load the model once and report whether work may continue."""
+        """Load the model without running a disposable inference pass."""
         if cancellation.is_cancelled:
             return False
-        model = self._get_model()
-        if self._warmup and not self._warmed_up:
-            segments, _info = model.transcribe(
-                np.zeros(16_000, dtype=np.float32),
-                language="ru",
-                task="transcribe",
-                beam_size=1,
-                vad_filter=False,
-            )
-            next(iter(segments), None)
-            self._warmed_up = True
+        self._get_model()
         return not cancellation.is_cancelled
 
     def transcribe(
@@ -133,17 +123,33 @@ class FasterWhisperTranscriptionService:
         transcribe_kwargs: dict[str, Any] = {
             "language": "ru",
             "task": "transcribe",
-            "beam_size": 5,
+            # The fast profile must not spend an unbounded amount of time in
+            # beam search on a noisy final chunk. Other profiles retain the
+            # more accurate search until their benchmark is completed.
+            "beam_size": 1 if job.model_id == "small" else 5,
             "vad_filter": True,
+            "condition_on_previous_text": False,
+            "max_new_tokens": 320,
         }
         if hints:
-            prompt_terms = ", ".join(hints[:30])
-            transcribe_kwargs["initial_prompt"] = f"Контекст и термины: {prompt_terms}."
+            # faster-whisper applies hotwords to every decoding window and
+            # truncates them to its own safe token budget. Passing the complete
+            # ordered dictionary avoids the old first-30-terms limitation.
+            transcribe_kwargs["hotwords"] = ", ".join(hints)
+            transcribe_kwargs["max_new_tokens"] = 200
+        if job.resume_from_seconds > 0:
+            transcribe_kwargs["clip_timestamps"] = f"{job.resume_from_seconds:.3f}"
 
         segments, info = model.transcribe(
             str(job.source_path),
             **transcribe_kwargs,
         )
+
+        # faster-whisper still creates a generation iterator when VAD removes the
+        # complete signal. Iterating it can run inference over padded empty features,
+        # which is both wasteful and may never produce a safe cancellation point.
+        if info.duration_after_vad <= 0.0:
+            return self._result(job, text="", incomplete=False)
 
         parts: list[str] = []
         transcript_segments: list[TranscriptSegment] = []
@@ -171,6 +177,7 @@ class FasterWhisperTranscriptionService:
                     processed_seconds=max(0.0, segment.end),
                     total_seconds=info.duration if info.duration > 0 else None,
                     elapsed_seconds=perf_counter() - started_at,
+                    partial_segments=tuple(transcript_segments),
                 )
             )
 

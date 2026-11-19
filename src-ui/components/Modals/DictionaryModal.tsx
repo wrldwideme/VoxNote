@@ -23,18 +23,28 @@ export const DictionaryModal: React.FC<DictionaryModalProps> = ({
   onRemoveCustomDictionary,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isPickingFileRef = useRef(false);
 
   const handlePickDictionary = async () => {
+    const isTauri =
+      typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__);
+    if (!isTauri) {
+      fileInputRef.current?.click();
+      return;
+    }
+    if (isPickingFileRef.current) return;
+
+    isPickingFileRef.current = true;
     try {
       const picked = await sidecarClient.pickDictionaryFile();
       if (picked) {
         onImportCustomDictionary(picked);
-        return;
       }
-    } catch {
-      // fallback
+    } catch (err) {
+      console.warn("[DictionaryPicker] native dialog failed:", err);
+    } finally {
+      isPickingFileRef.current = false;
     }
-    fileInputRef.current?.click();
   };
 
   return (
@@ -42,7 +52,7 @@ export const DictionaryModal: React.FC<DictionaryModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Терминологические словари"
-      description="Словари подсказывают модели редкие термины, повышая точность расшифровки лекций."
+      description="Термины передаются модели через hotwords для каждого окна распознавания; фактический объём ограничивается контекстом Whisper."
       maxWidth="md"
     >
       <div className="space-y-3 py-1">
@@ -89,6 +99,7 @@ export const DictionaryModal: React.FC<DictionaryModalProps> = ({
             type="file"
             accept=".txt"
             className="hidden"
+            onClick={(e) => e.stopPropagation()}
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
                 onImportCustomDictionary(e.target.files[0]);

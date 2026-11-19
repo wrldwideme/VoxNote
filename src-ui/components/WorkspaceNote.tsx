@@ -1,20 +1,31 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import {
   BookOpenText,
   FileText,
   History,
   Sparkles,
-  Bold,
-  Italic,
-  Heading2,
-  List,
-  ListOrdered,
-  RotateCcw,
   Trash2,
   Copy,
   Check,
+  CirclePause,
+  Play,
+  X,
 } from "lucide-react";
 import { HistoryEntry } from "../types/ipc";
+import { RichTextEditor } from "./RichTextEditor";
+
+const modelLabel = (modelId: string) => {
+  if (modelId === "small") return "Быстрая (small)";
+  if (modelId === "turbo" || modelId === "large-v3-turbo") return "Сбалансированная (turbo)";
+  if (modelId === "large-v3") return "Максимальная точность (large-v3)";
+  return modelId;
+};
+
+const deviceLabel = (device: string) => {
+  if (device === "cuda") return "Видеокарта NVIDIA (CUDA)";
+  if (device === "cpu") return "Процессор (CPU)";
+  return device;
+};
 
 export interface WorkspaceNoteProps {
   entry: HistoryEntry;
@@ -22,6 +33,10 @@ export interface WorkspaceNoteProps {
   onUpdateText: (newText: string) => void;
   onUpdateTitle: (newTitle: string) => void;
   onDeleteEntry?: (id: string) => void;
+  onResumeTranscription?: (entry: HistoryEntry) => void;
+  onClose?: () => void;
+  onRelinkAudio?: (entry: HistoryEntry) => void;
+  relinkError?: string | null;
 }
 
 export const WorkspaceNote: React.FC<WorkspaceNoteProps> = ({
@@ -30,12 +45,15 @@ export const WorkspaceNote: React.FC<WorkspaceNoteProps> = ({
   onUpdateText,
   onUpdateTitle,
   onDeleteEntry,
+  onResumeTranscription,
+  onClose,
+  onRelinkAudio,
+  relinkError,
 }) => {
   const [activeTab, setActiveTab] = useState<"notes" | "transcript" | "history">("notes");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState(entry.display_title);
   const [isCopied, setIsCopied] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const handleTitleSubmit = () => {
     setIsEditingTitle(false);
@@ -54,37 +72,6 @@ export const WorkspaceNote: React.FC<WorkspaceNoteProps> = ({
     ? entry.current_text.trim().split(/\s+/).filter(Boolean).length
     : 0;
   const charCount = entry.current_text.length;
-
-  // Real markdown toolbar actions
-  const applyWrap = (prefix: string, suffix: string = prefix) => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    const text = entry.current_text;
-    const selected = text.slice(start, end) || "текст";
-    const replacement = `${prefix}${selected}${suffix}`;
-    const newText = text.slice(0, start) + replacement + text.slice(end);
-    onUpdateText(newText);
-    setTimeout(() => {
-      ta.focus();
-      ta.setSelectionRange(start + prefix.length, start + prefix.length + selected.length);
-    }, 0);
-  };
-
-  const applyLinePrefix = (prefix: string) => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const start = ta.selectionStart;
-    const text = entry.current_text;
-    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-    const newText = text.slice(0, lineStart) + prefix + text.slice(lineStart);
-    onUpdateText(newText);
-    setTimeout(() => {
-      ta.focus();
-      ta.setSelectionRange(start + prefix.length, start + prefix.length);
-    }, 0);
-  };
 
   return (
     <div className="flex-1 h-full overflow-y-auto px-8 py-6 space-y-5 bg-brand-background dark:bg-dark-background">
@@ -114,6 +101,17 @@ export const WorkspaceNote: React.FC<WorkspaceNoteProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg border border-brand-border dark:border-dark-border bg-brand-surface dark:bg-dark-surface text-brand-text-secondary hover:text-brand-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer shadow-subtle"
+                title="Закрыть заметку"
+                aria-label="Закрыть заметку"
+              >
+                <X size={14} />
+              </button>
+            )}
             <button
               onClick={handleCopy}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-brand-border dark:border-dark-border bg-brand-surface dark:bg-dark-surface text-xs font-medium text-brand-text dark:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer shadow-subtle"
@@ -144,17 +142,63 @@ export const WorkspaceNote: React.FC<WorkspaceNoteProps> = ({
           <span>·</span>
           <span>{entry.duration_formatted}</span>
           <span>·</span>
-          <span>Модель: {entry.model_id === "large-v3" ? "Максимальная точность" : entry.model_id}</span>
+          <span>Модель: {modelLabel(entry.model_id)}</span>
           <span>·</span>
-          <span>Устройство: {entry.device}</span>
+          <span>Устройство: {deviceLabel(entry.device)}</span>
           {entry.dictionary_id && (
             <>
               <span>·</span>
               <span>Словарь: {entry.dictionary_id === "medical-ru" ? "Медицинская лекция" : entry.dictionary_id}</span>
             </>
           )}
+          {(entry.status === "cancelled" || entry.status === "interrupted") && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              <CirclePause size={12} />
+              {entry.status === "interrupted" ? "Прервана" : "Остановлено"}
+            </span>
+          )}
         </div>
       </div>
+
+      {(entry.status === "cancelled" || entry.status === "interrupted") && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-300/70 bg-amber-50 p-3.5 text-xs dark:border-amber-700/60 dark:bg-amber-950/20">
+          <div>
+            <div className="font-semibold text-amber-900 dark:text-amber-200">
+              {entry.status === "interrupted" ? "Транскрибация была прервана" : "Транскрибация остановлена"}
+            </div>
+            <div className="mt-0.5 text-amber-800/80 dark:text-amber-300/80">
+              Распознанный текст сохранён. Продолжение начнётся с {Math.round(entry.resume_from_seconds)} сек.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onResumeTranscription?.(entry)}
+            disabled={!onResumeTranscription || !entry.file_path || !entry.file_available}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-primary px-3 py-2 font-semibold text-white hover:bg-brand-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Play size={13} className="fill-current" />
+            Продолжить
+          </button>
+        </div>
+      )}
+
+      {!entry.file_available && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-300/70 bg-amber-50 p-3.5 text-xs dark:border-amber-700/60 dark:bg-amber-950/20">
+          <div>
+            <div className="font-semibold text-amber-900 dark:text-amber-200">Исходный аудиофайл перемещён или удалён</div>
+            <div className="mt-0.5 text-amber-800/80 dark:text-amber-300/80">Текст доступен, но воспроизведение и продолжение требуют исходного файла.</div>
+          </div>
+          <button type="button" onClick={() => onRelinkAudio?.(entry)} className="shrink-0 rounded-lg bg-brand-primary px-3 py-2 font-semibold text-white hover:bg-brand-primary-hover">
+            Указать файл
+          </button>
+        </div>
+      )}
+
+      {relinkError && (
+        <div className="rounded-xl border border-brand-danger/30 bg-brand-danger/10 p-3.5 text-xs font-medium text-brand-danger">
+          {relinkError}
+        </div>
+      )}
 
       {/* 2. Navigation Tabs */}
       <div className="flex items-center justify-between border-b border-brand-border/40 dark:border-dark-border/40 pb-2">
@@ -219,83 +263,27 @@ export const WorkspaceNote: React.FC<WorkspaceNoteProps> = ({
           )}
 
           {/* Card 2: Полный конспект */}
-          <div className="p-4 rounded-xl bg-brand-surface dark:bg-dark-surface border border-brand-border dark:border-dark-border shadow-subtle space-y-3">
-            <div className="flex items-center justify-between border-b border-brand-border/60 dark:border-dark-border/60 pb-2.5">
+          <div className="rounded-xl bg-brand-surface dark:bg-dark-surface border border-brand-border dark:border-dark-border shadow-subtle overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-brand-border/60 dark:border-dark-border/60">
               <div className="flex items-center gap-2 text-xs font-semibold text-brand-text dark:text-dark-text">
                 <FileText size={15} className="text-brand-primary" />
                 <span>Текст конспекта</span>
               </div>
-
-              {/* Working Markdown Formatting Toolbar */}
-              {isEditingMode && (
-                <div className="flex items-center gap-1 text-brand-text-secondary">
-                  <button
-                    onClick={() => applyLinePrefix("## ")}
-                    className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
-                    title="Заголовок (##)"
-                  >
-                    <Heading2 size={14} />
-                  </button>
-                  <button
-                    onClick={() => applyWrap("**")}
-                    className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer font-bold"
-                    title="Жирный текст (**)"
-                  >
-                    <Bold size={13} />
-                  </button>
-                  <button
-                    onClick={() => applyWrap("*")}
-                    className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer italic"
-                    title="Курсив (*)"
-                  >
-                    <Italic size={13} />
-                  </button>
-                  <span className="w-px h-3.5 bg-brand-border mx-1" />
-                  <button
-                    onClick={() => applyLinePrefix("- ")}
-                    className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
-                    title="Маркированный список (- )"
-                  >
-                    <List size={14} />
-                  </button>
-                  <button
-                    onClick={() => applyLinePrefix("1. ")}
-                    className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
-                    title="Нумерованный список (1. )"
-                  >
-                    <ListOrdered size={14} />
-                  </button>
-                  {entry.has_edits && (
-                    <button
-                      onClick={() => {
-                        if (confirm("Сбросить все правки и восстановить оригинальный текст распознавания?")) {
-                          onUpdateText(entry.text);
-                        }
-                      }}
-                      className="p-1 rounded hover:bg-brand-danger/10 text-brand-text-secondary hover:text-brand-danger cursor-pointer ml-1"
-                      title="Сбросить правки к оригиналу"
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                  )}
-                </div>
-              )}
+              <span className="text-[11px] text-brand-text-secondary">
+                {isEditingMode ? "Редактирование" : "Только чтение"}
+              </span>
             </div>
-
-            {/* Editable or Preview text */}
-            {isEditingMode ? (
-              <textarea
-                ref={textareaRef}
-                value={entry.current_text}
-                onChange={(e) => onUpdateText(e.target.value)}
-                className="w-full min-h-[360px] text-xs leading-relaxed text-brand-text dark:text-dark-text bg-transparent border-0 focus:outline-none resize-y font-sans selection:bg-brand-primary-light"
-                placeholder="Текст лекции..."
-              />
-            ) : (
-              <div className="w-full min-h-[360px] text-xs leading-relaxed text-brand-text dark:text-dark-text whitespace-pre-wrap select-text font-sans">
-                {entry.current_text}
-              </div>
-            )}
+            <RichTextEditor
+              value={entry.current_text}
+              onChange={onUpdateText}
+              editable={isEditingMode}
+              hasEdits={entry.has_edits}
+              onRestoreOriginal={() => {
+                if (confirm("Сбросить все правки и восстановить оригинальный текст распознавания?")) {
+                  onUpdateText(entry.text);
+                }
+              }}
+            />
           </div>
         </div>
       )}
@@ -319,22 +307,36 @@ export const WorkspaceNote: React.FC<WorkspaceNoteProps> = ({
         <div className="max-w-4xl p-5 rounded-xl bg-brand-surface dark:bg-dark-surface border border-brand-border dark:border-dark-border shadow-subtle space-y-3 text-xs">
           <div className="font-semibold text-brand-text dark:text-dark-text">История изменений</div>
           <div className="text-brand-text-secondary">
-            {entry.has_edits ? (
+            {(entry.revisions || []).length > 0 ? (
               <div className="space-y-2">
-                <p>Текст был изменён пользователем и автоматически сохранён в локальную базу данных.</p>
-                <button
-                  onClick={() => {
-                    if (confirm("Сбросить правки и восстановить оригинальный текст?")) {
-                      onUpdateText(entry.text);
-                    }
-                  }}
-                  className="px-3 py-1.5 rounded-lg border border-brand-border bg-brand-surface text-brand-danger font-medium hover:bg-brand-danger/10 cursor-pointer"
-                >
-                  Восстановить исходный текст модели
-                </button>
+                <p>VoxNote хранит до 20 последних локальных версий текста.</p>
+                {entry.revisions.map((revision, index) => (
+                  <div key={`${revision.created_at}-${index}`} className="flex items-start justify-between gap-3 rounded-xl border border-brand-border/70 p-3 dark:border-dark-border">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-brand-text dark:text-dark-text">Версия от {revision.created_at}</div>
+                      <p className="mt-1 line-clamp-2 leading-relaxed">{revision.text || "Пустой текст"}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateText(revision.text)}
+                      className="shrink-0 rounded-lg border border-brand-border px-2.5 py-1.5 font-semibold text-brand-text hover:bg-black/5 dark:border-dark-border dark:text-dark-text dark:hover:bg-white/5"
+                    >
+                      Восстановить
+                    </button>
+                  </div>
+                ))}
+                {entry.has_edits && (
+                  <button
+                    type="button"
+                    onClick={() => onUpdateText(entry.text)}
+                    className="px-3 py-1.5 rounded-lg border border-brand-border bg-brand-surface text-brand-danger font-medium hover:bg-brand-danger/10 cursor-pointer"
+                  >
+                    Восстановить исходный текст модели
+                  </button>
+                )}
               </div>
             ) : (
-              <p>Текст совпадает с оригинальной транскрибацией модели (нет сохранённых правок).</p>
+              <p>Сохранённых версий пока нет. Они появятся после первой правки текста.</p>
             )}
           </div>
         </div>

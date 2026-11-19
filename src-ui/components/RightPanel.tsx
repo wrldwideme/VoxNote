@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Download, Copy, Check, ChevronDown, Volume2, Play } from "lucide-react";
+import { Download, Copy, Check, ChevronDown, Volume2, Play, FileQuestion } from "lucide-react";
 import { Button } from "./Button";
 import { AudioPlayer } from "./AudioPlayer";
 import { TranscriptSegment } from "../types/ipc";
@@ -15,6 +15,9 @@ export interface RightPanelProps {
   isEditingMode: boolean;
   onToggleEditingMode: (isEditing: boolean) => void;
   onSeekSegment?: (seconds: number) => void;
+  hasTranscript: boolean;
+  audioAvailable?: boolean;
+  onRelinkAudio?: () => void;
 }
 
 export const RightPanel: React.FC<RightPanelProps> = ({
@@ -28,6 +31,9 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   isEditingMode,
   onToggleEditingMode,
   onSeekSegment,
+  hasTranscript,
+  audioAvailable = true,
+  onRelinkAudio,
 }) => {
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number | null>(null);
@@ -49,7 +55,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   return (
     <aside className="w-[300px] min-w-[280px] max-w-[340px] h-full border-l border-brand-border dark:border-dark-border bg-brand-surface dark:bg-dark-surface flex flex-col justify-between p-4 select-none shrink-0 overflow-hidden">
       {/* Top: Actions & Toggle */}
-      <div className="space-y-3.5">
+      {hasTranscript && <div className="space-y-3.5">
         {/* Buttons: Export & Copy */}
         <div className="space-y-2">
           {/* Main Action: Экспортировать */}
@@ -125,10 +131,10 @@ export const RightPanel: React.FC<RightPanelProps> = ({
             <span>{isAutosaved ? "Сохранено" : "Сохранение..."}</span>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Middle: Transcript Timeline */}
-      <div className="flex-1 my-3 overflow-hidden flex flex-col">
+      {hasTranscript && <div className="flex-1 my-3 overflow-hidden flex flex-col">
         <div className="flex items-center gap-1.5 mb-2 px-1">
           <Volume2 size={13} className="text-brand-text-secondary" />
           <span className="text-xs font-semibold text-brand-text dark:text-dark-text">
@@ -176,15 +182,37 @@ export const RightPanel: React.FC<RightPanelProps> = ({
             })
           )}
         </div>
-      </div>
+      </div>}
+
+      {!hasTranscript && (
+        <div className="flex-1 flex items-center justify-center px-3 text-center">
+          <div className="space-y-2 text-xs text-brand-text-secondary">
+            <Volume2 size={20} className="mx-auto text-brand-primary" />
+            <p className="font-semibold text-brand-text dark:text-dark-text">Аудио готово к прослушиванию</p>
+            <p>Экспорт и таймлайн появятся после получения текста.</p>
+          </div>
+        </div>
+      )}
 
       {/* Bottom: Real Working Audio Player */}
-      <AudioPlayer
-        audioPath={audioPath}
-        durationFormatted={durationFormatted}
-        waveform={waveform}
-        seekTime={playerSeekTime}
-      />
+      {audioAvailable ? (
+        <AudioPlayer
+          audioPath={audioPath}
+          durationFormatted={durationFormatted}
+          waveform={waveform}
+          seekTime={playerSeekTime}
+        />
+      ) : (
+        <div className="rounded-xl border border-amber-300/70 bg-amber-50 p-3 text-center text-xs dark:border-amber-700/60 dark:bg-amber-950/20">
+          <FileQuestion size={18} className="mx-auto text-amber-700 dark:text-amber-300" />
+          <div className="mt-1.5 font-semibold text-amber-900 dark:text-amber-200">Исходный файл не найден</div>
+          {onRelinkAudio && (
+            <button type="button" onClick={onRelinkAudio} className="mt-2 font-semibold text-brand-primary hover:underline">
+              Указать файл заново
+            </button>
+          )}
+        </div>
+      )}
     </aside>
   );
 };

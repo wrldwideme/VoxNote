@@ -63,6 +63,10 @@
 | [**VoxNote-0.1.0-Windows-x64-Portable.zip**](https://github.com/wrldwideme/VoxNote/releases/download/v0.1.0/VoxNote-0.1.0-Windows-x64-Portable.zip) | Portable ZIP | **773.9 МБ** | Автономная версия без инсталляции в систему |
 | [**VoxNote_0.1.0_x64_en-US.msi**](https://github.com/wrldwideme/VoxNote/releases/download/v0.1.0/VoxNote_0.1.0_x64_en-US.msi) | WiX MSI | **1.33 ГБ** | Корпоративный пакет Windows Installer |
 
+> Ветка разработки уже использует новую раздельную поставку: slim-установщик приложения **6,1 МБ**, CPU runtime **88,2 МБ**, опциональный NVIDIA pack **667,4 МБ**, CPU Portable **97,2 МБ** и Full NVIDIA Portable **764,5 МБ**. Эти файлы подготовлены локально и появятся в таблице после публикации следующего релиза.
+
+При первом запуске slim-версии пользователь сам выбирает CPU или NVIDIA. Ничего не скачивается до этого выбора. Runtime устанавливается один раз в `%LOCALAPPDATA%\VoxNote\runtime`; последующие небольшие обновления интерфейса его не затрагивают. Проверка новой версии автоматическая, но скачивание и установка начинаются только после подтверждения пользователя.
+
 ### 🔐 Контрольные суммы файлов
 
 ```text
@@ -158,15 +162,18 @@ powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1
 
 Скрипт автоматически:
 1. Генерирует наборы мультииконок (`generate_icons.py`);
-2. Собирает бинарник `voxnote-sidecar.exe` через PyInstaller с динамической дедупликацией библиотек CUDA;
-3. Собирает фронтенд (`pnpm build`);
-4. Собирает установщики Tauri (`VoxNote_0.1.0_x64-setup.exe` и `.msi`);
-5. Формирует автономный `VoxNote-0.1.0-Windows-x64-Portable.zip`.
+2. Собирает CPU/core runtime через PyInstaller без CUDA-библиотек;
+3. Формирует отдельные архивы core runtime и NVIDIA accelerator pack и записывает их SHA-256 в manifest;
+4. Собирает фронтенд (`pnpm build`) и подписанный slim NSIS installer Tauri;
+5. Создаёт подписанные updater-метаданные `latest.json`;
+6. Формирует отдельные CPU Portable и Full NVIDIA Portable.
+
+Для подписания updater нужен приватный ключ Tauri в `%LOCALAPPDATA%\VoxNote\release-keys\updater.key`. Ключ не хранится в репозитории и не должен попадать в release-артефакты.
 
 ### 4. Тесты и линтеры
 
 ```powershell
-# Python тесты (97 тестов):
+# Python unit-, integration- и IPC contract-тесты:
 .\.venv\Scripts\python.exe -m pytest
 
 # Проверка стиля и типизации:
@@ -175,8 +182,13 @@ powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1
 .\.venv\Scripts\python.exe -m mypy src
 
 # Сборка фронтенда:
+pnpm test
 pnpm build
 ```
+
+Общий IPC-контракт React и Python хранится в
+[`resources/ipc_contract.json`](resources/ipc_contract.json). Изменение RPC-метода или события
+требует одновременного обновления контракта и соответствующих тестов.
 
 ---
 

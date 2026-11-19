@@ -64,6 +64,308 @@
   }
 }
 
+:root[data-reduce-motion="true"] *,
+:root[data-reduce-motion="true"] ::before,
+:root[data-reduce-motion="true"] ::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* Document editor */
+.rich-editor {
+  background: var(--app-surface);
+}
+
+.rich-editor-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  min-height: 2.75rem;
+  padding: 0.375rem 0.625rem;
+  overflow-x: auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 75%, transparent);
+  background: color-mix(in srgb, var(--app-surface) 96%, var(--app-bg));
+  scrollbar-width: thin;
+}
+
+.rich-editor-toolbar-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 1.875rem;
+  height: 1.875rem;
+  border-radius: 0.45rem;
+  color: var(--app-text-muted);
+  transition: color 167ms ease, background-color 167ms ease, transform 83ms ease;
+}
+
+.rich-editor-toolbar-button:hover:not(:disabled) {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-primary-light) 72%, transparent);
+}
+
+.rich-editor-toolbar-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.rich-editor-toolbar-button.is-active {
+  color: var(--app-primary);
+  background: var(--app-primary-light);
+}
+
+.rich-editor-toolbar-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.32;
+}
+
+.rich-editor-block-select {
+  flex: 0 0 auto;
+  min-width: 8.5rem;
+  height: 1.875rem;
+  padding: 0 1.75rem 0 0.625rem;
+  border: 1px solid var(--app-border);
+  border-radius: 0.5rem;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  outline: none;
+}
+
+.rich-editor-block-select:focus-visible,
+.rich-editor-toolbar-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-primary) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.rich-editor-toolbar-divider {
+  width: 1px;
+  height: 1.25rem;
+  margin: 0 0.25rem;
+  flex: 0 0 auto;
+  background: var(--app-border);
+}
+
+.rich-editor-toolbar-spacer {
+  flex: 1 0 0.5rem;
+}
+
+.rich-editor-link-panel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-primary-light) 40%, var(--app-surface));
+  color: var(--app-text-muted);
+}
+
+.rich-editor-link-panel input {
+  min-width: 8rem;
+  flex: 1;
+  height: 1.9rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--app-border);
+  border-radius: 0.5rem;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: 0.6875rem;
+  outline: none;
+}
+
+.rich-editor-link-panel input:focus {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-primary) 15%, transparent);
+}
+
+.rich-editor-link-apply,
+.rich-editor-link-remove {
+  height: 1.9rem;
+  padding: 0 0.7rem;
+  border-radius: 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 650;
+}
+
+.rich-editor-link-apply {
+  background: var(--app-primary);
+  color: white;
+}
+
+.rich-editor-link-remove {
+  border: 1px solid var(--app-border);
+  color: var(--app-text-muted);
+}
+
+.rich-editor-link-cancel {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.5rem;
+  color: var(--app-text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.rich-editor-link-cancel:hover,
+.rich-editor-link-remove:hover {
+  background: color-mix(in srgb, var(--app-border) 45%, transparent);
+  color: var(--app-text);
+}
+
+.rich-editor-content {
+  min-height: 360px;
+  padding: 1.5rem 1.75rem 2rem;
+  color: var(--app-text);
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.75;
+  user-select: text;
+  -webkit-user-select: text;
+  outline: none;
+  caret-color: var(--app-primary);
+}
+
+.rich-editor.is-readonly .rich-editor-content {
+  cursor: text;
+}
+
+.rich-editor-content > *:first-child {
+  margin-top: 0;
+}
+
+.rich-editor-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.rich-editor-content p {
+  margin: 0.55rem 0;
+}
+
+.rich-editor-content h1,
+.rich-editor-content h2,
+.rich-editor-content h3 {
+  margin: 1.35em 0 0.55em;
+  color: var(--app-text);
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.rich-editor-content h1 {
+  font-size: 1.65rem;
+  font-weight: 750;
+}
+
+.rich-editor-content h2 {
+  font-size: 1.3rem;
+  font-weight: 720;
+}
+
+.rich-editor-content h3 {
+  font-size: 1.08rem;
+  font-weight: 700;
+}
+
+.rich-editor-content ul,
+.rich-editor-content ol {
+  margin: 0.7rem 0;
+  padding-left: 1.6rem;
+}
+
+.rich-editor-content ul {
+  list-style: disc;
+}
+
+.rich-editor-content ol {
+  list-style: decimal;
+}
+
+.rich-editor-content li {
+  margin: 0.22rem 0;
+  padding-left: 0.15rem;
+}
+
+.rich-editor-content li > p {
+  margin: 0;
+}
+
+.rich-editor-content blockquote {
+  margin: 1rem 0;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 3px solid var(--app-primary);
+  color: var(--app-text-muted);
+}
+
+.rich-editor-content code {
+  padding: 0.12rem 0.32rem;
+  border-radius: 0.32rem;
+  background: color-mix(in srgb, var(--app-primary-light) 74%, transparent);
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.rich-editor-content pre {
+  margin: 1rem 0;
+  padding: 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--app-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--app-bg) 78%, #111 8%);
+}
+
+.rich-editor-content pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.rich-editor-content a {
+  color: var(--app-primary);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.rich-editor-content mark {
+  padding: 0.05em 0.14em;
+  border-radius: 0.2em;
+  background: #f6dc7a;
+  color: #332b13;
+}
+
+:root[data-theme="dark"] .rich-editor-content mark {
+  background: #75601c;
+  color: #fff7d6;
+}
+
+.rich-editor-content hr {
+  margin: 1.5rem 0;
+  border: 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.rich-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--app-text-muted);
+  pointer-events: none;
+}
+
+.rich-editor-content ::selection {
+  background: color-mix(in srgb, var(--app-primary-light) 90%, transparent);
+}
+
+.rich-editor-hint {
+  padding: 0.45rem 1.75rem 0.65rem;
+  border-top: 1px solid color-mix(in srgb, var(--app-border) 55%, transparent);
+  color: var(--app-text-muted);
+  font-size: 0.625rem;
 }

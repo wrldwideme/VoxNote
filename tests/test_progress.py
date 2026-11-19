@@ -33,10 +33,19 @@ def test_eta_is_smoothed_against_single_speed_spike() -> None:
     for elapsed, processed in ((10.0, 10.0), (20.0, 20.0), (30.0, 30.0), (40.0, 80.0)):
         update = estimator.observe(snapshot(processed, 200.0, elapsed)).snapshot
 
-    assert update.eta_seconds is None
+    assert update.eta_seconds == 120.0
     for elapsed, processed in ((50.0, 90.0), (60.0, 100.0), (70.0, 110.0)):
         update = estimator.observe(snapshot(processed, 200.0, elapsed)).snapshot
     assert update.eta_seconds == 90.0
+
+
+def test_eta_uses_conservative_cumulative_speed_for_sparse_segments() -> None:
+    estimator = ProgressEstimator()
+
+    update = estimator.observe(snapshot(1200.0, 5000.0, 40.0)).snapshot
+
+    assert update.eta_seconds is not None
+    assert round(update.eta_seconds) == 158
 
 
 def test_progress_updates_are_limited_to_ten_per_second() -> None:

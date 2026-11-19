@@ -7,8 +7,65 @@ import {
   ThemeMode,
   TranscriptSegment,
 } from "../types/ipc";
+import ipcContract from "../../resources/ipc_contract.json";
 
 type EventCallback<T = any> = (data: T) => void;
+
+interface MethodContract {
+  required: string[];
+  optional: string[];
+}
+
+interface IpcContract {
+  version: number;
+  methods: Record<string, MethodContract>;
+  events: string[];
+}
+
+export interface RpcBridge {
+  listen(onMessage: (message: string) => void): Promise<void>;
+  send(message: string): Promise<void>;
+}
+
+export interface RuntimeStatus {
+  ready: boolean;
+  core_installed: boolean;
+  nvidia_installed: boolean;
+  installing: boolean;
+  dev_runtime: boolean;
+  runtime_version: string;
+  runtime_root: string;
+  executable: string;
+  core_size_bytes: number;
+  nvidia_size_bytes: number;
+}
+
+export interface RuntimeInstallProgress {
+  package: "core" | "nvidia";
+  phase: "downloading" | "verifying" | "extracting" | "completed";
+  downloaded_bytes: number;
+  total_bytes: number;
+  percent: number;
+}
+
+const contract = ipcContract as IpcContract;
+
+class TauriRpcBridge implements RpcBridge {
+  public async listen(onMessage: (message: string) => void): Promise<void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen<string>("sidecar-message", (event) => onMessage(event.payload));
+  }
+
+  public async send(message: string): Promise<void> {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("send_to_sidecar", { message });
+  }
+}
+
+function createDefaultBridge(): RpcBridge | null {
+  const isTauri = typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__);
+  return isTauri ? new TauriRpcBridge() : null;
+}
 
 // Mock fallback data reflecting Concept A lecture notes
 const initialSegments: TranscriptSegment[] = [
@@ -35,6 +92,10 @@ const mockLectures: HistoryEntry[] = [
     edited_text: null,
     current_text: "Есть приложение GoodNotes. Оно очень удобное для учёбы: в нём можно хранить учебники в PDF-формате, искать по ним, писать рукописные конспекты, писать отдельно текстовые конспекты, но неудобно то, что если здесь делать текстовые конспекты, во-первых, страницы существуют отдельно друг от друга, то есть нет как в Word переключения на следующую страницу, и если ты захочешь исправить что-то, например, на первой текста, у тебя не получится продлить это и перенести на следующую, как единые истории. Во-вторых, здесь не получается вести и рукописный, и печатный конспект. Например, я всё-таки решила делать печатный конспект, и в процессе мне пришлось что-то подписать от руки. И если я вдруг в это же место захочу вставить какой-то другой текст, мои рукописные пометки останутся на этом листе, и нет никакой возможности их перенести вместе с тем куском конспекта, к которому они были предназначены. Плюс, если учебник скачан в формате PDF, текстовая расшифровка может работать некорректно. Альтернативы — Pages на Apple и Word как более универсальный инструмент.",
     has_edits: false,
+    status: "completed",
+    resume_from_seconds: 0,
+    file_available: true,
+    revisions: [],
     segments: initialSegments,
   },
   {
@@ -53,6 +114,10 @@ const mockLectures: HistoryEntry[] = [
     edited_text: null,
     current_text: "Основные понятия фармакокинетики и фармакодинамики. Пути введения лекарственных веществ, биодоступность и терапевтический индекс.",
     has_edits: false,
+    status: "completed",
+    resume_from_seconds: 0,
+    file_available: true,
+    revisions: [],
     segments: [],
   },
   {
@@ -71,6 +136,10 @@ const mockLectures: HistoryEntry[] = [
     edited_text: null,
     current_text: "Строение сердца, предсердия и желудочки. Проводящая система сердца: синусно-предсердный узел, атриовентрикулярный узел и пучок Гиса.",
     has_edits: false,
+    status: "completed",
+    resume_from_seconds: 0,
+    file_available: true,
+    revisions: [],
     segments: [],
   },
   {
@@ -89,6 +158,10 @@ const mockLectures: HistoryEntry[] = [
     edited_text: null,
     current_text: "Разбор пациента с жалобами на боли за грудиной и одышку. Анализ данных ЭКГ и выбор антиаритмической терапии.",
     has_edits: false,
+    status: "completed",
+    resume_from_seconds: 0,
+    file_available: true,
+    revisions: [],
     segments: [],
   },
   {
@@ -107,6 +180,10 @@ const mockLectures: HistoryEntry[] = [
     edited_text: null,
     current_text: "Классификация гипоксических состояний: дыхательная, циркуляторная, гемическая и тканевая гипоксия. Компенсаторные реакции организма.",
     has_edits: false,
+    status: "completed",
+    resume_from_seconds: 0,
+    file_available: true,
+    revisions: [],
     segments: [],
   },
 ];
@@ -115,6 +192,7 @@ export class SidecarClient {
   private listeners: Map<string, Set<EventCallback>> = new Map();
   private mockHistory: HistoryEntry[] = [...mockLectures];
   private currentTheme: ThemeMode = "light";
+  private reduceMotion = false;
   private currentDevice: "auto" | "cuda" | "cpu" = "auto";
   private currentModel = "large-v3";
   private currentDictionary = "medical-ru";
@@ -122,10 +200,11 @@ export class SidecarClient {
   // IPC Protocol state
   private nextRequestId = 1;
   private pendingRequests = new Map<number, { resolve: (res: any) => void; reject: (err: any) => void }>();
-  private isTauri = typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__);
+  private readonly isTauri: boolean;
   private tauriInitialized = false;
 
-  constructor() {
+  constructor(private readonly bridge: RpcBridge | null = createDefaultBridge()) {
+    this.isTauri = bridge !== null;
     if (this.isTauri) {
       this.initTauriIpc();
     }
@@ -134,10 +213,7 @@ export class SidecarClient {
   private async initTauriIpc(): Promise<void> {
     if (this.tauriInitialized) return;
     try {
-      const { listen } = await import("@tauri-apps/api/event");
-      await listen<string>("sidecar-message", (event) => {
-        this.handleIncomingRawMessage(event.payload);
-      });
+      await this.bridge?.listen((message) => this.handleIncomingRawMessage(message));
       this.tauriInitialized = true;
     } catch (e) {
       console.warn("[SidecarClient] Tauri IPC initialization fallback:", e);
@@ -157,7 +233,7 @@ export class SidecarClient {
             pending.resolve(msg.result);
           }
         }
-      } else if ("method" in msg) {
+      } else if ("method" in msg && contract.events.includes(msg.method)) {
         // Streaming notification (e.g. transcription_progress, audio_inspected)
         this.emit(msg.method, msg.params);
       }
@@ -167,11 +243,11 @@ export class SidecarClient {
   }
 
   private async callRpc<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+    const normalizedParams = this.validateRpcCall(method, params);
     if (this.isTauri) {
       await this.initTauriIpc();
       const id = ++this.nextRequestId;
-      const requestPayload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
-      const { invoke } = await import("@tauri-apps/api/core");
+      const requestPayload = JSON.stringify({ jsonrpc: "2.0", id, method, params: normalizedParams });
 
       return new Promise<T>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -192,7 +268,7 @@ export class SidecarClient {
           },
         });
 
-        invoke("send_to_sidecar", { message: requestPayload }).catch((err) => {
+        this.bridge?.send(requestPayload).catch((err) => {
           clearTimeout(timeout);
           this.pendingRequests.delete(id);
           reject(new Error(`Failed to send IPC message: ${err}`));
@@ -201,7 +277,28 @@ export class SidecarClient {
     }
 
     // Fallback implementation for browser development / Vite preview
-    return this.fallbackCall<T>(method, params);
+    return this.fallbackCall<T>(method, normalizedParams);
+  }
+
+  private validateRpcCall(method: string, params: Record<string, any>): Record<string, any> {
+    const methodContract = contract.methods[method];
+    if (!methodContract) {
+      throw new Error(`RPC method '${method}' is absent from IPC contract v${contract.version}`);
+    }
+
+    const normalized = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== undefined)
+    );
+    const allowed = new Set([...methodContract.required, ...methodContract.optional]);
+    const unexpected = Object.keys(normalized).filter((name) => !allowed.has(name));
+    if (unexpected.length > 0) {
+      throw new Error(`Unexpected params for RPC method '${method}': ${unexpected.join(", ")}`);
+    }
+    const missing = methodContract.required.filter((name) => !(name in normalized));
+    if (missing.length > 0) {
+      throw new Error(`Missing params for RPC method '${method}': ${missing.join(", ")}`);
+    }
+    return normalized;
   }
 
   private async fallbackCall<T = any>(method: string, params: Record<string, any>): Promise<T> {
@@ -209,6 +306,10 @@ export class SidecarClient {
       case "ping":
         return { status: "pong", version: "0.1.0" } as T;
       case "get_system_info":
+        return this.getMockSystemInfo() as T;
+      case "update_settings":
+        if (params.theme) this.currentTheme = params.theme;
+        if (typeof params.reduce_motion === "boolean") this.reduceMotion = params.reduce_motion;
         return this.getMockSystemInfo() as T;
       case "get_models":
         return this.getMockModels() as T;
@@ -230,6 +331,12 @@ export class SidecarClient {
         return (this.mockHistory.find((e) => e.id === params.entry_id) || null) as T;
       case "update_history_entry":
         return this.updateMockHistoryEntry(params.entry_id, params.title, params.edited_text) as T;
+      case "relink_history_audio": {
+        const entry = this.updateMockHistoryEntry(params.entry_id);
+        const relinked = { ...entry, file_path: params.file_path, file_available: true };
+        this.mockHistory[this.mockHistory.findIndex((item) => item.id === params.entry_id)] = relinked;
+        return relinked as T;
+      }
       case "remove_history_entry":
         this.mockHistory = this.mockHistory.filter((e) => e.id !== params.entry_id);
         return { status: "removed" } as T;
@@ -265,6 +372,10 @@ export class SidecarClient {
     return this.callRpc("get_system_info");
   }
 
+  public async updateSettings(changes: Partial<Pick<SystemInfo, "theme" | "reduce_motion">>): Promise<SystemInfo> {
+    return this.callRpc("update_settings", changes);
+  }
+
   public async inspectAudio(filePath: string): Promise<{ status: string; file_path: string }> {
     return this.callRpc("inspect_audio", { file_path: filePath });
   }
@@ -279,13 +390,16 @@ export class SidecarClient {
       file_path: filePath,
       model_id: modelId,
       device_preference: device,
-      device: device,
       dictionary_id: dictionaryId,
     });
   }
 
   public async cancelTranscription(): Promise<{ status: string }> {
     return this.callRpc("cancel_transcription");
+  }
+
+  public async resumeTranscription(entryId: string): Promise<{ status: string }> {
+    return this.callRpc("resume_transcription", { entry_id: entryId });
   }
 
   public async getModels(): Promise<ModelOption[]> {
@@ -342,6 +456,10 @@ export class SidecarClient {
 
   public async updateHistoryEntry(id: string, title?: string, editedText?: string): Promise<HistoryEntry> {
     return this.callRpc("update_history_entry", { entry_id: id, title, edited_text: editedText });
+  }
+
+  public async relinkHistoryAudio(id: string, filePath: string): Promise<HistoryEntry> {
+    return this.callRpc("relink_history_audio", { entry_id: id, file_path: filePath });
   }
 
   public async removeHistoryEntry(id: string): Promise<{ status: string }> {
@@ -406,6 +524,59 @@ export class SidecarClient {
     window.open(url, "_blank");
   }
 
+  public async getRuntimeStatus(): Promise<RuntimeStatus> {
+    if (!this.isTauri) {
+      return {
+        ready: true,
+        core_installed: true,
+        nvidia_installed: true,
+        installing: false,
+        dev_runtime: true,
+        runtime_version: "development",
+        runtime_root: "",
+        executable: "browser-mock",
+        core_size_bytes: 0,
+        nvidia_size_bytes: 0,
+      };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<RuntimeStatus>("get_runtime_status");
+  }
+
+  public async installRuntime(profile: "cpu" | "nvidia"): Promise<void> {
+    if (!this.isTauri) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("install_runtime", { profile });
+  }
+
+  public async cancelRuntimeInstall(): Promise<void> {
+    if (!this.isTauri) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("cancel_runtime_install");
+  }
+
+  public async onRuntimeInstallProgress(
+    callback: (progress: RuntimeInstallProgress) => void
+  ): Promise<() => void> {
+    if (!this.isTauri) return () => {};
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<RuntimeInstallProgress>("runtime-install-progress", (event) => callback(event.payload));
+  }
+
+  public async onRuntimeInstallFinished(
+    callback: (status: RuntimeStatus) => void
+  ): Promise<() => void> {
+    if (!this.isTauri) return () => {};
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<RuntimeStatus>("runtime-install-finished", (event) => callback(event.payload));
+  }
+
+  public async onRuntimeInstallFailed(callback: (error: string) => void): Promise<() => void> {
+    if (!this.isTauri) return () => {};
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<string>("runtime-install-failed", (event) => callback(event.payload));
+  }
+
   // Mock Fallback Helpers
   private getMockSystemInfo(): SystemInfo {
     return {
@@ -425,7 +596,7 @@ export class SidecarClient {
       selected_dictionary: this.currentDictionary,
       has_custom_dictionary: false,
       theme: this.currentTheme,
-      reduce_motion: false,
+      reduce_motion: this.reduceMotion,
     };
   }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Download, ExternalLink, RefreshCw, CheckCircle2, AlertCircle, Sparkles } from "lucide-react";
 import { Modal } from "../Modal";
 import { Button } from "../Button";
@@ -32,6 +32,9 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   const [release, setRelease] = useState<ReleaseData | null>(null);
   const [isUpdateAvailable, setIsUpdateAvailable] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [installPercent, setInstallPercent] = useState(0);
+  const updateHandleRef = useRef<any>(null);
 
   const cleanVersion = (v: string) => v.replace(/^v/i, "").trim();
 
@@ -39,6 +42,28 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     setIsChecking(true);
     setError(null);
     try {
+      const isTauri = Boolean((window as any).__TAURI_INTERNALS__);
+      if (isTauri) {
+        const { check } = await import("@tauri-apps/plugin-updater");
+        const update = await check();
+        updateHandleRef.current = update;
+        if (!update) {
+          setRelease(null);
+          setIsUpdateAvailable(false);
+          return;
+        }
+        setRelease({
+          tagName: `v${update.version}`,
+          name: `VoxNote ${update.version}`,
+          body: update.body || "",
+          htmlUrl: "https://github.com/wrldwideme/VoxNote/releases/latest",
+          publishedAt: update.date ? new Date(update.date).toLocaleDateString("ru-RU") : "",
+          assets: [],
+        });
+        setIsUpdateAvailable(true);
+        return;
+      }
+
       const response = await fetch("https://api.github.com/repos/wrldwideme/VoxNote/releases/latest", {
         headers: {
           Accept: "application/vnd.github.v3+json",
@@ -90,6 +115,36 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
   const handleOpenUrl = (url: string) => {
     sidecarClient.openExternalUrl(url);
+  };
+
+  const handleInstallUpdate = async () => {
+    const update = updateHandleRef.current;
+    if (!update) {
+      if (release) handleOpenUrl(release.htmlUrl);
+      return;
+    }
+    setIsInstalling(true);
+    setError(null);
+    setInstallPercent(0);
+    let downloaded = 0;
+    let total = 0;
+    try {
+      await update.downloadAndInstall((event: any) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength || 0;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength || 0;
+          if (total > 0) setInstallPercent(Math.min(100, downloaded / total * 100));
+        } else if (event.event === "Finished") {
+          setInstallPercent(100);
+        }
+      });
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    } catch (installError) {
+      setError(`Не удалось установить подписанное обновление: ${installError instanceof Error ? installError.message : installError}`);
+      setIsInstalling(false);
+    }
   };
 
   const formatSize = (bytes: number) => {
@@ -173,7 +228,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               )}
 
               {/* Download Assets */}
-              <div className="space-y-1.5 pt-1">
+              {release.assets.length > 0 && <div className="space-y-1.5 pt-1">
                 <div className="text-[11px] font-semibold text-brand-text-secondary">Файлы для загрузки:</div>
                 <div className="flex flex-col gap-1.5">
                   {release.assets.map((asset) => (
@@ -194,7 +249,19 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                     </div>
                   ))}
                 </div>
-              </div>
+              </div>}
+
+              {isInstalling && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex justify-between text-[11px] font-semibold">
+                    <span>Скачиваем и проверяем подпись…</span>
+                    <span className="tabular-nums">{Math.round(installPercent)}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                    <div className="h-full rounded-full bg-brand-primary transition-[width]" style={{ width: `${installPercent}%` }} />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-1">
@@ -208,10 +275,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               <Button
                 size="sm"
                 variant="primary"
-                onClick={() => handleOpenUrl(release.htmlUrl)}
-                icon={<ExternalLink size={13} />}
+                onClick={() => void handleInstallUpdate()}
+                disabled={isInstalling}
+                icon={updateHandleRef.current ? <Download size={13} /> : <ExternalLink size={13} />}
               >
-                Открыть релиз на GitHub
+                {isInstalling ? "Установка…" : updateHandleRef.current ? "Скачать и установить" : "Открыть релиз на GitHub"}
               </Button>
             </div>
           </div>

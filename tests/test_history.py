@@ -227,6 +227,16 @@ def test_update_entry_text_and_title(tmp_path: Path) -> None:
     assert updated.edited_text == "Отредактированный конспект лекции."
     assert updated.current_text == "Отредактированный конспект лекции."
     assert updated.has_edits is True
+    assert len(updated.revisions) == 1
+    assert updated.revisions[0].text == "Исходный распознанный транскрипт."
+
+    assert store.update_entry_text(entry.id, "Вторая редакция.") is True
+    updated_again = store.get_entry(entry.id)
+    assert updated_again is not None
+    assert [revision.text for revision in updated_again.revisions[:2]] == [
+        "Отредактированный конспект лекции.",
+        "Исходный распознанный транскрипт.",
+    ]
 
 
 def test_safe_cap_never_deletes_edited_entries(tmp_path: Path) -> None:
@@ -332,3 +342,60 @@ def test_add_entry_stores_and_persists_file_path(tmp_path: Path) -> None:
     entries = reloaded_store.get_entries()
     assert len(entries) == 1
     assert entries[0].file_path == sample_audio_path
+
+
+def test_cancelled_entry_can_be_completed_in_place(tmp_path: Path) -> None:
+    store = LocalHistoryStore(tmp_path / "history.json")
+    entry = store.add_entry(
+        file_name="lecture.m4a",
+        duration_seconds=600.0,
+        model_id="small",
+        device="cuda",
+        dictionary_id=None,
+        text="Первая часть.",
+        status="cancelled",
+        resume_from_seconds=120.0,
+    )
+
+    updated = store.update_transcription(
+        entry.id,
+        text="Первая часть. Вторая часть.",
+        segments=(),
+        status="completed",
+        resume_from_seconds=0.0,
+        device="cuda",
+    )
+
+    assert updated is not None
+    assert updated.id == entry.id
+    assert updated.status == "completed"
+    assert updated.resume_from_seconds == 0.0
+    assert updated.text == "Первая часть. Вторая часть."
+
+
+def test_in_progress_checkpoint_is_recovered_and_can_be_relinked(tmp_path: Path) -> None:
+    store = LocalHistoryStore(tmp_path / "history.json")
+    entry = store.add_entry(
+        file_name="lecture.m4a",
+        duration_seconds=600.0,
+        model_id="small",
+        device="cuda",
+        dictionary_id=None,
+        text="Уже распознанная часть.",
+        status="in_progress",
+        resume_from_seconds=42.0,
+        file_path=str(tmp_path / "missing.m4a"),
+    )
+
+    reloaded = LocalHistoryStore(tmp_path / "history.json")
+    assert reloaded.recover_interrupted_entries() == 1
+    recovered = reloaded.get_entry(entry.id)
+    assert recovered is not None
+    assert recovered.status == "interrupted"
+    assert recovered.text == "Уже распознанная часть."
+
+    moved_audio = tmp_path / "moved.m4a"
+    moved_audio.write_bytes(b"audio")
+    relinked = reloaded.update_entry_file_path(entry.id, str(moved_audio))
+    assert relinked is not None
+    assert relinked.file_path == str(moved_audio)

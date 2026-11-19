@@ -5,7 +5,10 @@ from pathlib import Path
 
 from voxnote.application.background import CancellationToken
 from voxnote.domain.models import ProgressSnapshot, TranscriptionJob
-from voxnote.infrastructure import FasterWhisperTranscriptionService
+from voxnote.infrastructure import (
+    FasterWhisperTranscriptionService,
+    register_nvidia_dll_directories,
+)
 from voxnote.services.export import save_transcript
 
 
@@ -21,6 +24,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.device == "cuda":
+        register_nvidia_dll_directories()
     service = FasterWhisperTranscriptionService.from_model_path(
         args.model,
         device=args.device,
@@ -37,7 +42,10 @@ def main() -> int:
         label = "?" if percent is None else f"{percent:5.1f}%"
         print(f"\r{label} · {snapshot.processed_seconds:7.1f}s", end="", flush=True)
 
-    result = service.transcribe(job, CancellationToken(), show_progress)
+    cancellation = CancellationToken()
+    if not service.prepare(cancellation):
+        raise RuntimeError("Model preparation was cancelled")
+    result = service.transcribe(job, cancellation, show_progress)
     print()
     save_transcript(result, args.output)
     print(f"Saved: {args.output}")

@@ -79,6 +79,8 @@ class SidecarService:
         self._model_manager = model_manager
         self._dictionary_manager = dictionary_manager
         self._history_store = history_store
+        if self._history_store is not None:
+            self._history_store.recover_interrupted_entries()
         self._external_model = self._is_model_directory(model_path)
         self._model_path = model_path if self._external_model else self._selected_installed_path()
         self._service_factory = service_factory
@@ -150,8 +152,18 @@ class SidecarService:
         return self._model_manager.model_path(fallback)
 
     def _record_diagnostic(self, event: str, **kwargs: object) -> None:
-        if self._diagnostics is not None:
+        if self._diagnostics is None:
+            return
+        try:
             self._diagnostics.record(event, **kwargs)
+        except Exception as error:
+            # Diagnostics are best-effort and must never change application state
+            # or hide the result of a completed user operation.
+            logger.warning(
+                "Diagnostics event %s failed (%s)",
+                event,
+                type(error).__name__,
+            )
 
     # --------------------------------------------------------------------------
     # Ping & System Info
@@ -264,15 +276,28 @@ class SidecarService:
         service = self._audio_service
 
         def operation(token: CancellationToken) -> AudioMetadata | None:
+            return service.inspect(path, token)
+
+        handle = self._controller.task_runner.submit(operation)
+        self._audio_task = handle
+
+        def on_done(future: Future[AudioMetadata | None]) -> None:
+            if self._audio_task is handle:
+                self._audio_task = None
+            if future.cancelled():
+                return
             try:
-                metadata = service.inspect(path, token)
+                metadata = future.result()
             except Exception as error:
                 logger.warning("Audio inspection error: %s", error)
-                self._emit("audio_inspection_failed", {"file_path": str(path), "error": str(error)})
-                return None
+                self._emit(
+                    "audio_inspection_failed",
+                    {"file_path": str(path), "error": str(error)},
+                )
+                return
 
             if metadata is None:
-                return None
+                return
 
             self._audio_metadata = metadata
             with suppress(RuntimeError):
@@ -291,13 +316,6 @@ class SidecarService:
                     "waveform": list(metadata.waveform),
                 },
             )
-            return metadata
-
-        handle = self._controller.task_runner.submit(operation)
-        self._audio_task = handle
-
-        def on_done(_f: Future[AudioMetadata | None]) -> None:
-            self._audio_task = None
 
         handle.future.add_done_callback(on_done)
 
@@ -311,17 +329,21 @@ class SidecarService:
     # --------------------------------------------------------------------------
 
     def _is_busy(self) -> bool:
+        transcription_state_is_active = self._controller.state_machine.state in {
+            AppState.PREPARING_AUDIO,
+            AppState.LOADING_MODEL,
+            AppState.TRANSCRIBING,
+            AppState.FINALIZING,
+        }
         return (
-            self._transcription_task is not None
-            or self._download_task is not None
-            or self._audio_task is not None
-            or self._controller.state_machine.state
-            in {
-                AppState.PREPARING_AUDIO,
-                AppState.LOADING_MODEL,
-                AppState.TRANSCRIBING,
-                AppState.FINALIZING,
-            }
+            (
+                self._transcription_task is not None
+                and not self._transcription_task.future.done()
+                and transcription_state_is_active
+            )
+            or (self._download_task is not None and not self._download_task.future.done())
+            or (self._audio_task is not None and not self._audio_task.future.done())
+            or transcription_state_is_active
         )
 
     def start_transcription(
@@ -331,9 +353,28 @@ class SidecarService:
         device_preference: str | None = None,
         device: str | None = None,
         dictionary_id: str | None = None,
+        resume_entry_id: str | None = None,
     ) -> dict[str, Any]:
         if self._is_busy():
             raise SidecarServiceError(BUSY_ERROR, "Транскрибация или загрузка уже выполняется.")
+
+        resume_entry = None
+        if resume_entry_id is not None:
+            if self._history_store is None:
+                raise SidecarServiceError(INVALID_PARAMS, "Хранилище истории не инициализировано.")
+            resume_entry = self._history_store.get_entry(resume_entry_id)
+            if resume_entry is None:
+                raise SidecarServiceError(INVALID_PARAMS, "Остановленная запись не найдена.")
+            if resume_entry.status not in {"cancelled", "interrupted"}:
+                raise SidecarServiceError(
+                    INVALID_PARAMS,
+                    "Продолжить можно только остановленную или прерванную запись.",
+                )
+            file_path = resume_entry.file_path
+            model_id = resume_entry.model_id
+            dictionary_id = resume_entry.dictionary_id or NONE_ID
+            if device_preference is None and resume_entry.device in {"cuda", "cpu"}:
+                device_preference = resume_entry.device
 
         effective_device = device_preference or device
 
@@ -381,7 +422,12 @@ class SidecarService:
             model_id=model_path.name,
             dictionary_id=effective_dict_id,
             device_preference=self._controller.settings.device_preference,
+            resume_from_seconds=(
+                resume_entry.resume_from_seconds if resume_entry is not None else 0.0
+            ),
         )
+        base_text = resume_entry.text if resume_entry is not None else ""
+        base_segments = resume_entry.segments if resume_entry is not None else ()
         self._transcription_started_at = monotonic()
         self._record_diagnostic(
             "transcription_started",
@@ -394,9 +440,20 @@ class SidecarService:
         )
 
         cancelled_emitted = False
+        checkpoint_entry_id = resume_entry.id if resume_entry is not None else None
+        checkpoint_text = base_text
+        checkpoint_segments = base_segments
+        checkpoint_segment_count = len(base_segments)
+        last_checkpoint_at = 0.0
 
         def operation(token: CancellationToken) -> TranscriptionResult:
-            nonlocal cancelled_emitted
+            nonlocal cancelled_emitted, checkpoint_entry_id
+            nonlocal checkpoint_text, checkpoint_segments, checkpoint_segment_count
+            nonlocal last_checkpoint_at
+            last_processed_seconds = job.resume_from_seconds
+            active_device_name = (
+                resume_entry.device if resume_entry is not None else job.device_preference
+            )
             try:
                 service = self._service_factory(
                     model_path,
@@ -411,9 +468,83 @@ class SidecarService:
                     )
 
                 self._active_device_label = str(getattr(service, "device_label", "CPU"))
+                active_device_name = str(getattr(service, "device_name", job.device_preference))
+                self._emit(
+                    "transcription_runtime_selected",
+                    {
+                        "model_id": job.model_id,
+                        "device": active_device_name,
+                        "device_label": self._active_device_label,
+                    },
+                )
                 self._controller.state_machine.transition(AppState.TRANSCRIBING)
 
                 def on_progress(snapshot: ProgressSnapshot) -> None:
+                    nonlocal checkpoint_entry_id, checkpoint_text, checkpoint_segments
+                    nonlocal checkpoint_segment_count, last_checkpoint_at
+                    nonlocal last_processed_seconds
+                    last_processed_seconds = max(
+                        last_processed_seconds,
+                        snapshot.processed_seconds,
+                    )
+                    if snapshot.partial_segments and self._history_store is not None:
+                        continuation = tuple(
+                            segment
+                            for segment in snapshot.partial_segments
+                            if segment.end > job.resume_from_seconds
+                        )
+                        combined_segments = base_segments + continuation
+                        combined_text = " ".join(
+                            part
+                            for part in (
+                                base_text,
+                                " ".join(segment.text for segment in continuation),
+                            )
+                            if part
+                        ).strip()
+                        now = monotonic()
+                        should_checkpoint = (
+                            checkpoint_entry_id is None
+                            or len(combined_segments) >= checkpoint_segment_count + 5
+                            or now - last_checkpoint_at >= 2.0
+                        )
+                        if should_checkpoint:
+                            if checkpoint_entry_id is None:
+                                checkpoint = self._history_store.add_entry(
+                                    file_name=source.name,
+                                    duration_seconds=(
+                                        resume_entry.duration_seconds
+                                        if resume_entry is not None
+                                        else (
+                                            self._audio_metadata.duration_seconds
+                                            if self._audio_metadata
+                                            else snapshot.total_seconds
+                                        )
+                                    ),
+                                    model_id=job.model_id,
+                                    device=active_device_name,
+                                    dictionary_id=job.dictionary_id,
+                                    text=combined_text,
+                                    title=source.stem,
+                                    segments=combined_segments,
+                                    file_path=str(source.resolve()),
+                                    status="in_progress",
+                                    resume_from_seconds=last_processed_seconds,
+                                )
+                                checkpoint_entry_id = checkpoint.id
+                            else:
+                                self._history_store.update_transcription(
+                                    checkpoint_entry_id,
+                                    text=combined_text,
+                                    segments=combined_segments,
+                                    status="in_progress",
+                                    resume_from_seconds=last_processed_seconds,
+                                    device=active_device_name,
+                                )
+                            checkpoint_text = combined_text
+                            checkpoint_segments = combined_segments
+                            checkpoint_segment_count = len(combined_segments)
+                            last_checkpoint_at = now
                     update = self._progress_estimator.observe(snapshot)
                     if not update.notify_ui and snapshot.percent != 100.0:
                         return
@@ -432,6 +563,23 @@ class SidecarService:
                     )
 
                 result = service.transcribe(job, token, on_progress)
+                if base_segments or base_text:
+                    continuation_segments = tuple(
+                        segment
+                        for segment in result.segments
+                        if segment.end > job.resume_from_seconds
+                    )
+                    combined_text = " ".join(
+                        part for part in (base_text, result.text) if part
+                    ).strip()
+                    result = TranscriptionResult(
+                        text=combined_text,
+                        model_id=result.model_id,
+                        device=result.device,
+                        dictionary_id=result.dictionary_id,
+                        incomplete=result.incomplete,
+                        segments=base_segments + continuation_segments,
+                    )
                 if token.is_cancelled or result.incomplete:
                     if self._controller.state_machine.state in {
                         AppState.PREPARING_AUDIO,
@@ -440,34 +588,96 @@ class SidecarService:
                         AppState.FINALIZING,
                     }:
                         self._controller.state_machine.transition(AppState.CANCELLED)
-                    self._emit("transcription_cancelled", {})
+                    resume_from_seconds = max(
+                        last_processed_seconds,
+                        result.segments[-1].end if result.segments else job.resume_from_seconds,
+                    )
+                    cancelled_entry_dict: dict[str, Any] = {}
+                    if self._history_store is not None:
+                        if checkpoint_entry_id is not None:
+                            saved_entry = self._history_store.update_transcription(
+                                checkpoint_entry_id,
+                                text=result.text,
+                                segments=result.segments,
+                                status="cancelled",
+                                resume_from_seconds=resume_from_seconds,
+                                device=result.device,
+                            )
+                        else:
+                            saved_entry = self._history_store.add_entry(
+                                file_name=source.name,
+                                duration_seconds=(
+                                    self._audio_metadata.duration_seconds
+                                    if self._audio_metadata
+                                    else None
+                                ),
+                                model_id=result.model_id,
+                                device=result.device,
+                                dictionary_id=result.dictionary_id,
+                                text=result.text,
+                                title=source.stem,
+                                segments=result.segments,
+                                file_path=str(source.resolve()),
+                                status="cancelled",
+                                resume_from_seconds=resume_from_seconds,
+                            )
+                        if saved_entry is not None:
+                            cancelled_entry_dict = self._serialize_history_entry(saved_entry)
+                    cancelled_emitted = True
+                    self._emit(
+                        "transcription_cancelled",
+                        {
+                            "text": result.text,
+                            "segments": [asdict(segment) for segment in result.segments],
+                            "history_entry": cancelled_entry_dict,
+                            "resume_from_seconds": resume_from_seconds,
+                        },
+                    )
                     return result
 
                 self._controller.state_machine.transition(AppState.FINALIZING)
                 self._controller.state_machine.transition(AppState.COMPLETED)
                 self._record_diagnostic(
                     "transcription_completed",
-                    text_length=len(result.text),
+                    elapsed_ms=(
+                        round((monotonic() - self._transcription_started_at) * 1000)
+                        if self._transcription_started_at is not None
+                        else None
+                    ),
                     device=result.device,
+                    result="success",
                 )
 
                 # Record in history store
                 entry_dict: dict[str, Any] = {}
                 if self._history_store is not None:
-                    saved_entry = self._history_store.add_entry(
-                        file_name=source.name,
-                        duration_seconds=(
-                            self._audio_metadata.duration_seconds if self._audio_metadata else None
-                        ),
-                        model_id=result.model_id,
-                        device=result.device,
-                        dictionary_id=result.dictionary_id,
-                        text=result.text,
-                        title=source.stem,
-                        segments=result.segments,
-                        file_path=str(source.resolve()),
-                    )
-                    entry_dict = self._serialize_history_entry(saved_entry)
+                    if checkpoint_entry_id is not None:
+                        saved_entry = self._history_store.update_transcription(
+                            checkpoint_entry_id,
+                            text=result.text,
+                            segments=result.segments,
+                            status="completed",
+                            resume_from_seconds=0.0,
+                            device=result.device,
+                        )
+                    else:
+                        saved_entry = self._history_store.add_entry(
+                            file_name=source.name,
+                            duration_seconds=(
+                                self._audio_metadata.duration_seconds
+                                if self._audio_metadata
+                                else None
+                            ),
+                            model_id=result.model_id,
+                            device=result.device,
+                            dictionary_id=result.dictionary_id,
+                            text=result.text,
+                            title=source.stem,
+                            segments=result.segments,
+                            file_path=str(source.resolve()),
+                        )
+                    if saved_entry is not None:
+                        entry_dict = self._serialize_history_entry(saved_entry)
 
                 self._emit(
                     "transcription_completed",
@@ -484,6 +694,15 @@ class SidecarService:
                 return result
 
             except Exception as err:
+                if self._history_store is not None and checkpoint_entry_id is not None:
+                    self._history_store.update_transcription(
+                        checkpoint_entry_id,
+                        text=checkpoint_text,
+                        segments=checkpoint_segments,
+                        status="interrupted",
+                        resume_from_seconds=last_processed_seconds,
+                        device=active_device_name,
+                    )
                 err_msg = str(err)
                 lowered = err_msg.lower()
                 self._device_error_recoverable = (
@@ -492,7 +711,11 @@ class SidecarService:
                 )
                 if self._controller.state_machine.state is not AppState.ERROR:
                     self._controller.state_machine.transition(AppState.ERROR)
-                self._record_diagnostic("transcription_failed", error=err_msg)
+                self._record_diagnostic(
+                    "transcription_failed",
+                    error_type=type(err).__name__,
+                    result="failure",
+                )
                 self._emit(
                     "transcription_error",
                     {
@@ -506,7 +729,8 @@ class SidecarService:
         self._transcription_task = handle
 
         def on_done(future: Future[TranscriptionResult]) -> None:
-            self._transcription_task = None
+            if self._transcription_task is handle:
+                self._transcription_task = None
             if future.cancelled() and not cancelled_emitted:
                 if self._controller.state_machine.state in {
                     AppState.PREPARING_AUDIO,
@@ -523,7 +747,11 @@ class SidecarService:
             "file_path": str(source),
             "model_id": job.model_id,
             "device": job.device_preference,
+            "resume_entry_id": resume_entry_id,
         }
+
+    def resume_transcription(self, entry_id: str) -> dict[str, Any]:
+        return self.start_transcription(resume_entry_id=entry_id)
 
     def cancel_transcription(self) -> dict[str, Any]:
         task = self._transcription_task
@@ -809,6 +1037,42 @@ class SidecarService:
 
         return self._serialize_history_entry(entry)
 
+    def relink_history_audio(self, entry_id: str, file_path: str) -> dict[str, Any]:
+        if self._history_store is None:
+            raise SidecarServiceError(INVALID_PARAMS, "Хранилище истории не инициализировано.")
+        current_entry = self._history_store.get_entry(entry_id)
+        if current_entry is None:
+            raise SidecarServiceError(INVALID_PARAMS, f"Заметка '{entry_id}' не найдена.")
+        path = Path(file_path)
+        if not path.is_file():
+            raise SidecarServiceError(FILE_ERROR, "Выбранный аудиофайл не найден.")
+        if path.suffix.lower() not in SUPPORTED_AUDIO_SUFFIXES:
+            raise SidecarServiceError(FILE_ERROR, "Неподдерживаемый аудиоформат.")
+        if self._audio_service is not None and current_entry.duration_seconds:
+            try:
+                metadata = self._audio_service.inspect(path, CancellationToken())
+            except (OSError, RuntimeError, ValueError) as error:
+                raise SidecarServiceError(
+                    FILE_ERROR,
+                    "Не удалось проверить выбранный аудиофайл.",
+                ) from error
+            if metadata is None:
+                raise SidecarServiceError(FILE_ERROR, "Не удалось прочитать выбранный аудиофайл.")
+            tolerance = max(2.0, current_entry.duration_seconds * 0.02)
+            if abs(metadata.duration_seconds - current_entry.duration_seconds) > tolerance:
+                raise SidecarServiceError(
+                    FILE_ERROR,
+                    "Выбран другой аудиофайл: его длительность не совпадает с исходной записью.",
+                    {
+                        "expected_duration": current_entry.duration_seconds,
+                        "actual_duration": metadata.duration_seconds,
+                    },
+                )
+        entry = self._history_store.update_entry_file_path(entry_id, str(path.resolve()))
+        if entry is None:  # Defensive: the entry was removed between validation and update.
+            raise SidecarServiceError(INVALID_PARAMS, f"Заметка '{entry_id}' не найдена.")
+        return self._serialize_history_entry(entry)
+
     def remove_history_entry(self, entry_id: str) -> dict[str, Any]:
         if self._history_store is None:
             raise SidecarServiceError(INVALID_PARAMS, "Хранилище истории не инициализировано.")
@@ -886,6 +1150,11 @@ class SidecarService:
             "has_edits": entry.has_edits,
             "segments": [asdict(s) for s in segments],
             "file_path": getattr(entry, "file_path", ""),
+            "file_available": bool(getattr(entry, "file_path", ""))
+            and Path(getattr(entry, "file_path", "")).is_file(),
+            "status": getattr(entry, "status", "completed"),
+            "resume_from_seconds": getattr(entry, "resume_from_seconds", 0.0),
+            "revisions": [asdict(revision) for revision in getattr(entry, "revisions", ())],
         }
 
     @staticmethod
