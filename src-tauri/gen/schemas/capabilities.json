@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default permissions for VoxNote desktop shell","local":true,"windows":["*"],"permissions":["core:default","shell:default","updater:default","process:allow-restart"]}}
+{"default":{"identifier":"default","description":"Default permissions for VoxNote desktop shell","local":true,"windows":["*"],"permissions":["core:default","core:window:allow-destroy","core:window:allow-close","shell:default","updater:default","process:allow-restart"]}}

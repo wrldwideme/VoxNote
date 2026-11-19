@@ -161,6 +161,13 @@ describe("VoxNote application smoke flows", () => {
     });
     fakeClient.startTranscription.mockResolvedValue({ status: "started" });
     fakeClient.cancelTranscription.mockResolvedValue({ status: "cancelling" });
+    fakeClient.updateHistoryEntry.mockImplementation(async (id: string, title?: string, text?: string) => ({
+      id,
+      title: title || "Лекция",
+      display_title: title || "Лекция",
+      current_text: text || "",
+      revisions: [],
+    }));
   });
 
   it("opens on the home screen and moves to the new transcription screen", async () => {
@@ -303,5 +310,30 @@ describe("VoxNote application smoke flows", () => {
 
     expect(fakeClient.updateSettings).toHaveBeenCalledWith({ reduce_motion: true });
     expect(document.documentElement).toHaveAttribute("data-reduce-motion", "true");
+  });
+
+  it("allows installing the NVIDIA accelerator pack from preferences", async () => {
+    fakeClient.getRuntimeStatus.mockResolvedValueOnce({
+      ready: true,
+      core_installed: true,
+      nvidia_installed: false,
+      installing: false,
+      dev_runtime: true,
+      runtime_version: "test",
+      runtime_root: "",
+      executable: "test-sidecar",
+      core_size_bytes: 100,
+      nvidia_size_bytes: 500,
+    });
+    fakeClient.installRuntime.mockResolvedValueOnce(undefined);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Настройки" }));
+    expect(screen.getByText("Ускорение NVIDIA (CUDA)")).toBeVisible();
+    const installButton = screen.getByRole("button", { name: "Установить GPU" });
+    await user.click(installButton);
+
+    expect(fakeClient.installRuntime).toHaveBeenCalledWith("nvidia");
   });
 });

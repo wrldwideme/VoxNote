@@ -5,7 +5,7 @@ mod runtime_manager;
 use runtime_manager::{ResolvedSidecar, RuntimeInstallState, RuntimeStatus};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, State, Window};
 #[derive(Default)]
 struct SidecarProcess {
     stdin: Option<ChildStdin>,
-    child: Option<Child>,
+    child_pid: Option<u32>,
     is_running: bool,
 }
 
@@ -77,12 +77,14 @@ fn spawn_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
 
     match cmd.spawn() {
         Ok(mut child) => {
+            let pid = child.id();
             let stdin = child.stdin.take();
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
 
             {
                 let mut guard = state_arc.lock().unwrap();
+                guard.child_pid = Some(pid);
                 guard.stdin = stdin;
                 guard.is_running = true;
             }
@@ -128,6 +130,7 @@ fn spawn_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
                     let mut guard = state_clone.lock().unwrap();
                     guard.is_running = false;
                     guard.stdin = None;
+                    guard.child_pid = None;
                 }
                 let _ = app_clone.emit("sidecar-status-changed", false);
             });
@@ -138,6 +141,31 @@ fn spawn_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
             guard.is_running = false;
         }
     }
+}
+
+fn restart_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
+    let pid_to_kill = {
+        let mut guard = state_arc.lock().unwrap();
+        if let Some(ref mut stdin) = guard.stdin {
+            let _ = writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"shutdown","id":999999}}"#);
+            let _ = stdin.flush();
+        }
+        guard.stdin = None;
+        guard.child_pid
+    };
+    thread::sleep(std::time::Duration::from_millis(300));
+    if let Some(pid) = pid_to_kill {
+        #[cfg(windows)]
+        let _ = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output();
+    }
+    {
+        let mut guard = state_arc.lock().unwrap();
+        guard.is_running = false;
+        guard.child_pid = None;
+    }
+    spawn_sidecar(app_handle, state_arc);
 }
 
 #[tauri::command]
@@ -191,7 +219,7 @@ fn install_runtime(app: AppHandle, state: State<AppState>, profile: String) -> R
         }
         match result {
             Ok(()) => {
-                spawn_sidecar(app.clone(), sidecar_state);
+                restart_sidecar(app.clone(), sidecar_state);
                 let status = runtime_manager::get_status(&runtime_state);
                 let _ = app.emit("runtime-install-finished", status);
             }
@@ -295,8 +323,12 @@ fn main() {
                     let _ = writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"shutdown","id":999999}}"#);
                     let _ = stdin.flush();
                 }
-                if let Some(ref mut child) = guard.child {
-                    let _ = child.kill();
+                guard.stdin = None;
+                #[cfg(windows)]
+                if let Some(pid) = guard.child_pid.take() {
+                    let _ = Command::new("taskkill")
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .output();
                 }
             }
         })

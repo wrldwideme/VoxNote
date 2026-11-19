@@ -1,6 +1,6 @@
 [package]
 name = "voxnote"
-version = "0.2.0"
+version = "0.2.1"
 description = "VoxNote Desktop - Local Russian Audio Transcription"
 authors = ["VoxNote Team"]
 edition = "2021"

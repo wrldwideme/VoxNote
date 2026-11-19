@@ -7,6 +7,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+if (typeof document !== "undefined" && !document.elementFromPoint) {
+  document.elementFromPoint = () => null;
+}
+
 Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
   configurable: true,
   value: vi.fn(() => ({

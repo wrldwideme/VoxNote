@@ -12,7 +12,7 @@ import { OnboardingModal } from "./components/Modals/OnboardingModal";
 import { UpdateModal } from "./components/Modals/UpdateModal";
 import { PreferencesModal } from "./components/Modals/PreferencesModal";
 import { RuntimeSetup } from "./components/RuntimeSetup";
-import { RuntimeStatus, sidecarClient } from "./api/client";
+import { RuntimeInstallProgress, RuntimeStatus, sidecarClient } from "./api/client";
 import {
   AudioMetadata,
   DictionaryOption,
@@ -50,7 +50,7 @@ const formatDeviceLabel = (device: string, fallback = "") => {
 };
 
 export function App() {
-  const appVersion = "0.2.0";
+  const appVersion = "0.2.1";
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const initialTheme = (searchParams?.get("theme") as ThemeMode) || "light";
   const initialView = (searchParams?.get("view") as "home" | "note" | "new") || "home";
@@ -84,6 +84,9 @@ export function App() {
   const [reduceMotion, setReduceMotion] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [runtimeChecked, setRuntimeChecked] = useState(false);
+  const [runtimeInstallProgress, setRuntimeInstallProgress] = useState<RuntimeInstallProgress | null>(null);
+  const [isInstallingNvidia, setIsInstallingNvidia] = useState(false);
+  const [nvidiaInstallError, setNvidiaInstallError] = useState<string | null>(null);
   const runtimeBootstrappedRef = useRef(false);
 
   // New transcription state
@@ -124,8 +127,12 @@ export function App() {
   const requestNativeClose = async () => {
     allowNativeCloseRef.current = true;
     if (typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__)) {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().close();
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().close();
+      } catch {
+        await sidecarClient.closeWindow();
+      }
     } else {
       window.close();
     }
@@ -162,6 +169,61 @@ export function App() {
     runtimeBootstrappedRef.current = false;
     setRuntimeStatus(nextStatus);
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const cleanups: Array<() => void> = [];
+    void Promise.all([
+      sidecarClient.onRuntimeInstallProgress((nextProgress) => {
+        if (!disposed) setRuntimeInstallProgress(nextProgress);
+      }),
+      sidecarClient.onRuntimeInstallFinished((nextStatus) => {
+        if (disposed) return;
+        setIsInstallingNvidia(false);
+        setRuntimeInstallProgress(null);
+        runtimeBootstrappedRef.current = false;
+        setRuntimeStatus(nextStatus);
+        void sidecarClient
+          .getSystemInfo()
+          .then((info) => {
+            if (!disposed && info.device_capabilities?.cuda_available) {
+              setDevicePreference("auto");
+            }
+          })
+          .catch(() => {});
+      }),
+      sidecarClient.onRuntimeInstallFailed((err) => {
+        if (disposed) return;
+        setIsInstallingNvidia(false);
+        setRuntimeInstallProgress(null);
+        setNvidiaInstallError(err);
+      }),
+    ]).then((listeners) => cleanups.push(...listeners));
+    return () => {
+      disposed = true;
+      cleanups.forEach((c) => c());
+    };
+  }, []);
+
+  const handleInstallNvidia = async () => {
+    setIsInstallingNvidia(true);
+    setNvidiaInstallError(null);
+    try {
+      await sidecarClient.installRuntime("nvidia");
+    } catch (err: any) {
+      setIsInstallingNvidia(false);
+      setNvidiaInstallError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleCancelInstallNvidia = async () => {
+    try {
+      await sidecarClient.cancelRuntimeInstall();
+    } finally {
+      setIsInstallingNvidia(false);
+      setRuntimeInstallProgress(null);
+    }
+  };
 
   // Theme synchronization
   useEffect(() => {
@@ -406,16 +468,22 @@ export function App() {
 
     if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = window.setTimeout(async () => {
-      const updated = await sidecarClient.updateHistoryEntry(activeEntry.id, undefined, newText);
-      setActiveEntry((current) => {
-        if (!current || current.id !== updated.id) return current;
-        // Do not overwrite characters typed while the save request was in flight.
-        return current.current_text === newText
-          ? updated
-          : { ...current, revisions: updated.revisions };
-      });
-      setIsAutosaved(true);
-      loadHistory(searchQuery);
+      try {
+        const updated = await sidecarClient.updateHistoryEntry(activeEntry.id, undefined, newText);
+        if (updated) {
+          setActiveEntry((current) => {
+            if (!current || current.id !== updated.id) return current;
+            // Do not overwrite characters typed while the save request was in flight.
+            return current.current_text === newText
+              ? updated
+              : { ...current, revisions: updated.revisions };
+          });
+        }
+        setIsAutosaved(true);
+        loadHistory(searchQuery);
+      } catch {
+        // Ignore background autosave errors
+      }
     }, 600);
   };
 
@@ -892,6 +960,12 @@ export function App() {
         onClose={() => setIsPreferencesOpen(false)}
         theme={theme}
         reduceMotion={reduceMotion}
+        runtimeStatus={runtimeStatus}
+        onInstallNvidia={handleInstallNvidia}
+        onCancelInstallNvidia={handleCancelInstallNvidia}
+        isInstallingNvidia={isInstallingNvidia}
+        installProgress={runtimeInstallProgress}
+        installError={nvidiaInstallError}
         onChangeTheme={handleThemePreference}
         onChangeReduceMotion={handleReduceMotionPreference}
         onOpenModels={() => {

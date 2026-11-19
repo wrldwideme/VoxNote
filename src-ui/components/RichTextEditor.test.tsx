@@ -23,10 +23,11 @@ describe("RichTextEditor", () => {
     const onChange = vi.fn();
     render(<RichTextEditor value="" onChange={onChange} />);
 
-    await screen.findByLabelText("Редактор конспекта");
+    const editor = await screen.findByLabelText("Редактор конспекта");
     const boldButton = screen.getByRole("button", { name: "Жирный" });
     await user.click(boldButton);
     expect(boldButton).toHaveAttribute("aria-pressed", "true");
+    (editor as HTMLElement).focus();
     await user.keyboard("Важное");
 
     expect(onChange).toHaveBeenLastCalledWith("**Важное**");
