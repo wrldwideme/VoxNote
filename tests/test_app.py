@@ -3,7 +3,7 @@ from voxnote.__main__ import main
 
 
 def test_package_has_development_version() -> None:
-    assert voxnote.__version__ == "0.2.1"
+    assert voxnote.__version__ == "0.2.2"
 
 
 def test_main_entrypoint_is_callable() -> None:

@@ -63,7 +63,7 @@ const isNewerVersion = (candidate: string, current: string) => {
 };
 
 export function App() {
-  const appVersion = "0.2.1";
+  const appVersion = "0.2.2";
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const initialTheme = (searchParams?.get("theme") as ThemeMode) || "light";
   const initialView = (searchParams?.get("view") as "home" | "note" | "new") || "home";

@@ -6,7 +6,7 @@
 
 *Сфокусированное рабочее пространство для конспектирования лекций, вебинаров, докладов и медицинской терминологии.*
 
-[![GitHub Release](https://img.shields.io/badge/Release-v0.1.0-577A5B?style=flat-square&logo=github)](https://github.com/wrldwideme/VoxNote/releases/tag/v0.1.0)
+[![GitHub Release](https://img.shields.io/badge/Release-v0.2.2-577A5B?style=flat-square&logo=github)](https://github.com/wrldwideme/VoxNote/releases/tag/v0.2.2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4E6554?style=flat-square)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D6?style=flat-square&logo=windows)](https://github.com/wrldwideme/VoxNote)
 [![Privacy: 100% Offline](https://img.shields.io/badge/Privacy-100%25%20Offline-2E7D32?style=flat-square&logo=shield)](docs/privacy.md)
@@ -16,7 +16,7 @@
 
 <br/>
 
-[**Скачать VoxNote v0.1.0**](https://github.com/wrldwideme/VoxNote/releases/latest) •
+[**Скачать VoxNote v0.2.2**](https://github.com/wrldwideme/VoxNote/releases/latest) •
 [**Документация**](#-документация) •
 [**Спецификация (PROJECT_SPEC)**](PROJECT_SPEC.md) •
 [**Архитектура**](#-архитектура)
@@ -55,24 +55,22 @@
 
 ---
 
-## 📥 Загрузка (v0.1.0 MVP)
+## 📥 Загрузка (v0.2.2)
 
 | Дистрибутив | Формат | Размер | Назначение |
 |---|:---:|:---:|---|
-| [**VoxNote_0.1.0_x64-setup.exe**](https://github.com/wrldwideme/VoxNote/releases/download/v0.1.0/VoxNote_0.1.0_x64-setup.exe) | NSIS Installer | **609.4 МБ** | **Рекомендуемый установщик** с выбором языка и папки |
-| [**VoxNote-0.1.0-Windows-x64-Portable.zip**](https://github.com/wrldwideme/VoxNote/releases/download/v0.1.0/VoxNote-0.1.0-Windows-x64-Portable.zip) | Portable ZIP | **773.9 МБ** | Автономная версия без инсталляции в систему |
-| [**VoxNote_0.1.0_x64_en-US.msi**](https://github.com/wrldwideme/VoxNote/releases/download/v0.1.0/VoxNote_0.1.0_x64_en-US.msi) | WiX MSI | **1.33 ГБ** | Корпоративный пакет Windows Installer |
-
-> Ветка разработки уже использует новую раздельную поставку: slim-установщик приложения **6,1 МБ**, CPU runtime **88,2 МБ**, опциональный NVIDIA pack **667,4 МБ**, CPU Portable **97,2 МБ** и Full NVIDIA Portable **764,5 МБ**. Эти файлы подготовлены локально и появятся в таблице после публикации следующего релиза.
+| [**VoxNote_0.2.2_x64-slim-setup.exe**](https://github.com/wrldwideme/VoxNote/releases/download/v0.2.2/VoxNote_0.2.2_x64-slim-setup.exe) | NSIS Installer | **6,1 МБ** | **Рекомендуемый лёгкий установщик**; runtime выбирается при первом запуске |
+| [**VoxNote-0.2.2-Windows-x64-CPU-Portable.zip**](https://github.com/wrldwideme/VoxNote/releases/download/v0.2.2/VoxNote-0.2.2-Windows-x64-CPU-Portable.zip) | Portable ZIP | **97,2 МБ** | Автономная CPU-версия без установки и CUDA |
+| [**VoxNote-0.2.2-Windows-x64-Full-NVIDIA-Portable.zip**](https://github.com/wrldwideme/VoxNote/releases/download/v0.2.2/VoxNote-0.2.2-Windows-x64-Full-NVIDIA-Portable.zip) | Portable ZIP | **764,5 МБ** | Полная автономная версия с NVIDIA CUDA runtime |
 
 При первом запуске slim-версии пользователь сам выбирает CPU или NVIDIA. Ничего не скачивается до этого выбора. Runtime устанавливается один раз в `%LOCALAPPDATA%\VoxNote\runtime`; последующие небольшие обновления интерфейса его не затрагивают. Проверка новой версии автоматическая, но скачивание и установка начинаются только после подтверждения пользователя.
 
 ### 🔐 Контрольные суммы файлов
 
 ```text
-86BCE23C4F900EBD231F4E254F2A92127E78D92A162864D2F046C177612DD5D5  VoxNote_0.1.0_x64-setup.exe
-0AE58A0D9E1E0553AB3D9EAB242705F0E45C0D7A895C145C0A87535EC32C46E3  VoxNote-0.1.0-Windows-x64-Portable.zip
-18732FF8A75E019FD8B17110FD11498BC93AA73B724CE91571615D487AAABA62  VoxNote_0.1.0_x64_en-US.msi
+1abf3f1b92734bd12d5b1f9df70845cf8f1198ea216303a4f3d4807088eac507  VoxNote_0.2.2_x64-slim-setup.exe
+008bc60e0a7371c7f05ac7e3cadfce308719c7ae019eae97e16499dd08548ece  VoxNote-0.2.2-Windows-x64-CPU-Portable.zip
+8b4689718101fcc98b0e773770d0a8aaef32427709a3865bd76671487514a798  VoxNote-0.2.2-Windows-x64-Full-NVIDIA-Portable.zip
 ```
 
 ---
@@ -197,7 +195,7 @@ pnpm build
 - [**PROJECT_SPEC.md**](PROJECT_SPEC.md) — Продуктовая спецификация и требования;
 - [**IMPLEMENTATION_PLAN.md**](IMPLEMENTATION_PLAN.md) — Пошаговый план реализации с отчетами по этапам;
 - [**CHANGELOG.md**](CHANGELOG.md) — История изменений по версиям;
-- [**RELEASE_NOTES_v0.1.0.md**](RELEASE_NOTES_v0.1.0.md) — Примечания к текущему релизу;
+- [**RELEASE_NOTES_v0.2.2.md**](RELEASE_NOTES_v0.2.2.md) — Примечания к текущему релизу;
 - [**docs/privacy.md**](docs/privacy.md) — Локальная приватность и нулевой сетевой доступ;
 - [**docs/dictionaries.md**](docs/dictionaries.md) — Руководство по встроенным и пользовательским словарям;
 - [**docs/gpu-setup.md**](docs/gpu-setup.md) — Настройка и диагностика видеокарт NVIDIA CUDA.
