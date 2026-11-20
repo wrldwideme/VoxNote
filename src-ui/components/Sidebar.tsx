@@ -9,6 +9,7 @@ export interface SidebarProps {
   isNewActive: boolean;
   isHomeActive: boolean;
   homeDisabled?: boolean;
+  actionsDisabled?: boolean;
   onSearchChange: (q: string) => void;
   onSelectLecture: (id: string) => void;
   onNewFile: () => void;
@@ -28,6 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isNewActive,
   isHomeActive,
   homeDisabled = false,
+  actionsDisabled = false,
   onSearchChange,
   onSelectLecture,
   onNewFile,
@@ -66,10 +68,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <input
             ref={searchInputRef as any}
             type="text"
+            disabled={actionsDisabled}
             placeholder="Поиск по записям и тексту..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full pl-8 pr-12 py-1.5 text-xs bg-brand-background dark:bg-dark-background border border-brand-border dark:border-dark-border rounded-lg text-brand-text dark:text-dark-text placeholder:text-brand-text-secondary/70 focus:outline-none focus:border-brand-primary transition-colors"
+            className="w-full pl-8 pr-12 py-1.5 text-xs bg-brand-background dark:bg-dark-background border border-brand-border dark:border-dark-border rounded-lg text-brand-text dark:text-dark-text placeholder:text-brand-text-secondary/70 focus:outline-none focus:border-brand-primary transition-colors disabled:cursor-not-allowed disabled:opacity-60"
           />
           <span className="absolute right-2 px-1.5 py-0.5 text-[10px] font-mono text-brand-text-secondary dark:text-dark-text-secondary bg-black/5 dark:bg-white/5 rounded border border-brand-border/80 dark:border-dark-border">
             Ctrl K
@@ -79,7 +82,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Primary + Новый файл button (Concept A) */}
         <button
           onClick={onNewFile}
-          className={`w-full py-2 px-3 flex items-center justify-center gap-2 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer ${
+          disabled={actionsDisabled}
+          className={`w-full py-2 px-3 flex items-center justify-center gap-2 rounded-lg text-xs font-semibold transition-all duration-150 ${
+            actionsDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+          } ${
             isNewActive
               ? "bg-brand-primary text-white shadow-card ring-2 ring-brand-primary/20"
               : "bg-brand-primary hover:bg-brand-primary-hover active:bg-[#3C563F] text-white shadow-subtle"
@@ -113,8 +119,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 return (
                   <div
                     key={entry.id}
-                    onClick={() => onSelectLecture(entry.id)}
+                    onClick={() => {
+                      if (!actionsDisabled) onSelectLecture(entry.id);
+                    }}
+                    aria-disabled={actionsDisabled}
                     className={`group relative flex items-center justify-between p-2 rounded-xl text-xs cursor-pointer transition-all ${
+                      actionsDisabled ? "cursor-not-allowed opacity-60" : ""
+                    } ${
                       isSelected
                         ? "bg-brand-primary-light dark:bg-dark-primary-light text-brand-text dark:text-dark-text font-medium shadow-subtle border border-brand-primary/20 dark:border-brand-primary/30"
                         : "text-brand-text dark:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 border border-transparent"
@@ -147,6 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
 
                     <button
+                      disabled={actionsDisabled}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (confirm(`Удалить запись "${entry.display_title}" из истории?`)) {
@@ -180,8 +192,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <button
             onClick={onOpenSettings}
-            className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
-            title="Настройки моделей и словарей"
+            disabled={actionsDisabled}
+            className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+            title={actionsDisabled ? "Дождитесь завершения текущей операции" : "Настройки моделей и словарей"}
           >
             <Settings size={14} className="shrink-0" />
             <span>Настройки</span>
@@ -191,7 +204,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {onOpenUpdates && (
           <button
             onClick={onOpenUpdates}
+            disabled={actionsDisabled}
             className={`w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+              actionsDisabled ? "cursor-not-allowed opacity-50" : ""
+            } ${
               isUpdateAvailable
                 ? "bg-brand-primary text-white hover:bg-brand-primary-hover shadow-subtle animate-pulse"
                 : "text-brand-text-secondary dark:text-dark-text-secondary hover:text-brand-text dark:hover:text-dark-text hover:bg-black/5 dark:hover:bg-white/5"

@@ -4,6 +4,21 @@ import { describe, expect, it, vi } from "vitest";
 import { sidecarClient } from "../api/client";
 import { WorkspaceNew, WorkspaceNewProps } from "./WorkspaceNew";
 
+const nativeDrop = vi.hoisted(() => ({
+  handler: null as null | ((event: any) => void),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    onDragDropEvent: vi.fn(async (handler) => {
+      nativeDrop.handler = handler;
+      return () => {
+        nativeDrop.handler = null;
+      };
+    }),
+  }),
+}));
+
 function makeProps(overrides: Partial<WorkspaceNewProps> = {}): WorkspaceNewProps {
   return {
     onFileSelected: vi.fn(),
@@ -66,6 +81,25 @@ describe("WorkspaceNew", () => {
     expect(pickAudioFile).toHaveBeenCalledOnce();
     expect(browserInputClick).not.toHaveBeenCalled();
     expect(props.onFileSelected).not.toHaveBeenCalled();
+    delete (window as any).__TAURI_INTERNALS__;
+  });
+
+  it("accepts a native Tauri file drop with an absolute path", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const props = makeProps();
+    render(<WorkspaceNew {...props} />);
+    await act(async () => Promise.resolve());
+
+    act(() => {
+      nativeDrop.handler?.({
+        payload: { type: "drop", paths: ["C:\\audio\\лекция.wav"], position: { x: 1, y: 1 } },
+      });
+    });
+
+    expect(props.onFileSelected).toHaveBeenCalledWith("C:\\audio\\лекция.wav");
     delete (window as any).__TAURI_INTERNALS__;
   });
 

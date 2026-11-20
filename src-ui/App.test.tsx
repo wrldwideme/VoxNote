@@ -51,12 +51,14 @@ const fakeClient = vi.hoisted(() => {
     onRuntimeInstallProgress: vi.fn(async () => () => {}),
     onRuntimeInstallFinished: vi.fn(async () => () => {}),
     onRuntimeInstallFailed: vi.fn(async () => () => {}),
+    onSidecarStatusChanged: vi.fn(async () => () => {}),
   };
 });
 
 const fakeWindowApi = vi.hoisted(() => ({
   closeRequestedHandler: null as null | ((event: { preventDefault: () => void }) => void),
   close: vi.fn(),
+  onDragDropEvent: vi.fn(async () => () => {}),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -68,6 +70,7 @@ vi.mock("@tauri-apps/api/window", () => ({
       };
     }),
     close: fakeWindowApi.close,
+    onDragDropEvent: fakeWindowApi.onDragDropEvent,
   }),
 }));
 
@@ -277,6 +280,21 @@ describe("VoxNote application smoke flows", () => {
     );
   });
 
+  it("does not offer a CPU retry for a non-GPU transcription error", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await selectAudioFile(user);
+    await user.click(screen.getByRole("button", { name: "Начать транскрибацию" }));
+
+    fakeClient.emit("transcription_error", {
+      message: "Аудиофайл повреждён",
+      recoverable_on_cpu: false,
+    });
+
+    expect(await screen.findByText("Аудиофайл повреждён")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Повторить на процессоре/ })).not.toBeInTheDocument();
+  });
+
   it("asks before closing during transcription and cancels before exit", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
@@ -299,6 +317,36 @@ describe("VoxNote application smoke flows", () => {
 
     fakeClient.emit("transcription_cancelled", {});
     await waitFor(() => expect(fakeWindowApi.close).toHaveBeenCalledOnce());
+  });
+
+  it("keeps navigation and maintenance actions locked during transcription", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await selectAudioFile(user);
+    await user.click(screen.getByRole("button", { name: "Начать транскрибацию" }));
+
+    expect(screen.getByRole("button", { name: "Новый файл" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Настройки" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Проверить обновления" })).toBeDisabled();
+
+    await user.keyboard("{Control>}n{/Control}");
+    expect(screen.getByRole("button", { name: "Отменить транскрибацию" })).toBeVisible();
+  });
+
+  it("retries bootstrap until the sidecar is ready", async () => {
+    fakeClient.getSystemInfo
+      .mockRejectedValueOnce(new Error("sidecar is starting"))
+      .mockResolvedValue({
+        theme: "system",
+        reduce_motion: false,
+        device_preference: "auto",
+      });
+
+    render(<App />);
+
+    await waitFor(() => expect(fakeClient.getSystemInfo).toHaveBeenCalledTimes(2), {
+      timeout: 2000,
+    });
   });
 
   it("persists the reduced-motion preference from settings", async () => {

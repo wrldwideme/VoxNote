@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from voxnote.domain.models import HistoryEntry
@@ -399,3 +400,36 @@ def test_in_progress_checkpoint_is_recovered_and_can_be_relinked(tmp_path: Path)
     relinked = reloaded.update_entry_file_path(entry.id, str(moved_audio))
     assert relinked is not None
     assert relinked.file_path == str(moved_audio)
+
+
+def test_corrupted_history_is_preserved_before_recovery(tmp_path: Path) -> None:
+    history_file = tmp_path / "history.json"
+    history_file.write_text("{broken", encoding="utf-8")
+
+    store = LocalHistoryStore(history_file)
+
+    assert store.get_entries() == []
+    assert history_file.with_suffix(".json.corrupt").read_text(encoding="utf-8") == "{broken"
+
+
+def test_concurrent_history_edits_preserve_title_and_text(tmp_path: Path) -> None:
+    store = LocalHistoryStore(tmp_path / "history.json")
+    entry = store.add_entry(
+        file_name="lecture.wav",
+        duration_seconds=60.0,
+        model_id="small",
+        device="cpu",
+        dictionary_id=None,
+        text="Исходный текст",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        title_future = executor.submit(store.update_entry_title, entry.id, "Новый заголовок")
+        text_future = executor.submit(store.update_entry_text, entry.id, "Исправленный текст")
+        assert title_future.result(timeout=2.0) is True
+        assert text_future.result(timeout=2.0) is True
+
+    updated = store.get_entry(entry.id)
+    assert updated is not None
+    assert updated.title == "Новый заголовок"
+    assert updated.current_text == "Исправленный текст"

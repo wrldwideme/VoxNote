@@ -37,6 +37,16 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   const updateHandleRef = useRef<any>(null);
 
   const cleanVersion = (v: string) => v.replace(/^v/i, "").trim();
+  const isNewerVersion = (candidate: string, current: string) => {
+    const candidateParts = cleanVersion(candidate).split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const currentParts = cleanVersion(current).split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const length = Math.max(candidateParts.length, currentParts.length);
+    for (let index = 0; index < length; index += 1) {
+      const difference = (candidateParts[index] || 0) - (currentParts[index] || 0);
+      if (difference !== 0) return difference > 0;
+    }
+    return false;
+  };
 
   const checkForUpdates = async () => {
     setIsChecking(true);
@@ -81,7 +91,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
       const data = await response.json();
       const latestTag = data.tag_name || "";
-      const isNewer = cleanVersion(latestTag) !== cleanVersion(currentVersion) && latestTag !== "";
+      const isNewer = latestTag !== "" && isNewerVersion(latestTag, currentVersion);
 
       const assets = (data.assets || []).map((a: any) => ({
         name: a.name,

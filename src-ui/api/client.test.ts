@@ -10,9 +10,11 @@ interface JsonRpcRequest {
 
 class FakeBridge implements RpcBridge {
   public readonly requests: JsonRpcRequest[] = [];
+  public listenCalls = 0;
   private onMessage: ((message: string) => void) | null = null;
 
   public async listen(onMessage: (message: string) => void): Promise<void> {
+    this.listenCalls += 1;
     this.onMessage = onMessage;
   }
 
@@ -85,5 +87,14 @@ describe("SidecarClient IPC contract", () => {
     bridge.notify("unknown_event", { value: true });
 
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("registers exactly one bridge listener for concurrent startup calls", async () => {
+    const bridge = new FakeBridge();
+    const client = new SidecarClient(bridge);
+
+    await Promise.all([client.getHistory(), client.getModels(), client.getDictionaries()]);
+
+    expect(bridge.listenCalls).toBe(1);
   });
 });

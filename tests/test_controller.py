@@ -11,6 +11,10 @@ def make_controller(tmp_path: Path) -> ApplicationController:
     return ApplicationController(SettingsStore(tmp_path / "settings.json"))
 
 
+def assert_state(controller: ApplicationController, expected: AppState) -> None:
+    assert controller.state_machine.state is expected
+
+
 def test_startup_without_model_enters_onboarding(tmp_path: Path) -> None:
     controller = make_controller(tmp_path)
     controller.finish_startup(model_available=False)
@@ -34,7 +38,7 @@ def test_file_selection_and_clear(tmp_path: Path) -> None:
 
     controller.select_file(source)
     assert controller.selected_file == source
-    assert controller.state_machine.state is AppState.FILE_SELECTED
+    assert_state(controller, AppState.FILE_SELECTED)
 
     controller.clear_file()
     assert controller.selected_file is None
@@ -46,9 +50,36 @@ def test_file_selection_is_rejected_during_transcription(tmp_path: Path) -> None
     controller = make_controller(tmp_path)
     controller.state_machine = controller.state_machine.__class__(AppState.TRANSCRIBING)
 
-    with pytest.raises(RuntimeError, match="cannot be selected"):
+    with pytest.raises(RuntimeError, match="не может быть выбран"):
         controller.select_file(tmp_path / "other.ogg")
 
+    controller.shutdown()
+
+
+def test_file_selection_allowed_during_onboarding(tmp_path: Path) -> None:
+    controller = make_controller(tmp_path)
+    controller.finish_startup(model_available=False)
+    assert controller.state_machine.state is AppState.ONBOARDING
+
+    source = tmp_path / "audio.ogg"
+    controller.select_file(source)
+    assert controller.selected_file == source
+    assert_state(controller, AppState.FILE_SELECTED)
+
+    controller.finish_onboarding(model_available=True)
+    assert controller.selected_file == source
+    assert_state(controller, AppState.FILE_SELECTED)
+    controller.shutdown()
+
+
+def test_finish_onboarding_transitions_to_idle_without_file(tmp_path: Path) -> None:
+    controller = make_controller(tmp_path)
+    controller.finish_startup(model_available=False)
+    assert controller.state_machine.state is AppState.ONBOARDING
+
+    controller.finish_onboarding(model_available=True)
+    assert controller.selected_file is None
+    assert_state(controller, AppState.IDLE)
     controller.shutdown()
 
 

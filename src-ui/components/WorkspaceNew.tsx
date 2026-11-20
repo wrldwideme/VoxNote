@@ -22,6 +22,7 @@ export interface WorkspaceNewProps {
   processingDeviceLabel: string;
   error: string | null;
   onRetryOnCpu: () => void;
+  canRetryOnCpu?: boolean;
 }
 
 const sampleWaveform = [15, 20, 28, 18, 35, 25, 40, 20, 30, 25, 18, 32, 22, 28, 19, 31, 24, 18, 35, 22];
@@ -43,6 +44,7 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
   processingDeviceLabel,
   error,
   onRetryOnCpu,
+  canRetryOnCpu = true,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isPickingFileRef = useRef(false);
@@ -51,7 +53,45 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
   const [isProgressStalled, setIsProgressStalled] = useState(false);
   const [processingElapsedSeconds, setProcessingElapsedSeconds] = useState(0);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const onFileSelectedRef = useRef(onFileSelected);
   const [previewSrc, setPreviewSrc] = useState<string>("");
+
+  useEffect(() => {
+    onFileSelectedRef.current = onFileSelected;
+  }, [onFileSelected]);
+
+  useEffect(() => {
+    const isTauri =
+      typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__);
+    if (!isTauri) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) =>
+        getCurrentWindow().onDragDropEvent((event) => {
+          if (disposed) return;
+          if (event.payload.type === "drop") {
+            setIsDragging(false);
+            const firstPath = event.payload.paths[0];
+            if (firstPath) onFileSelectedRef.current(firstPath);
+          } else if (event.payload.type === "enter" || event.payload.type === "over") {
+            setIsDragging(true);
+          } else {
+            setIsDragging(false);
+          }
+        }),
+      )
+      .then((cleanup) => {
+        if (disposed) cleanup();
+        else unlisten = cleanup;
+      })
+      .catch((error) => console.warn("[AudioDrop] native drag-and-drop unavailable:", error));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedFilePath) {
@@ -188,11 +228,13 @@ export const WorkspaceNew: React.FC<WorkspaceNewProps> = ({
         {error && (
           <div className="p-4 rounded-xl bg-brand-danger/10 border border-brand-danger/30 text-brand-danger text-xs space-y-2 animate-in fade-in">
             <div className="font-semibold">{error}</div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="secondary" onClick={onRetryOnCpu} icon={<RefreshCw size={13} />}>
-                Повторить на процессоре (CPU)
-              </Button>
-            </div>
+            {canRetryOnCpu && (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" onClick={onRetryOnCpu} icon={<RefreshCw size={13} />}>
+                  Повторить на процессоре (CPU)
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

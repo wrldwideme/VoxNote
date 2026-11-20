@@ -69,8 +69,8 @@ struct RuntimeProgress {
 }
 
 fn manifest() -> Result<RuntimeManifest, String> {
-    let parsed: RuntimeManifest =
-        serde_json::from_str(MANIFEST_JSON).map_err(|err| format!("Некорректный runtime manifest: {err}"))?;
+    let parsed: RuntimeManifest = serde_json::from_str(MANIFEST_JSON)
+        .map_err(|err| format!("Некорректный runtime manifest: {err}"))?;
     if parsed.schema_version != 1 {
         return Err("Неподдерживаемая версия runtime manifest".to_string());
     }
@@ -103,6 +103,20 @@ fn core_executable(root: &Path, version: &str) -> PathBuf {
     core_dir(root, version).join("voxnote-sidecar.exe")
 }
 
+fn nvidia_runtime_valid(path: &Path) -> bool {
+    [
+        "cublas64_12.dll",
+        "cublaslt64_12.dll",
+        "cudnn64_9.dll",
+        "cudnn_cnn64_9.dll",
+        "cudnn_graph64_9.dll",
+        "cudnn_ops64_9.dll",
+        "nvrtc64_120_0.dll",
+    ]
+    .into_iter()
+    .all(|name| path.join(name).is_file())
+}
+
 fn installed_resolution(root: &Path, version: &str, source: &str) -> Option<ResolvedSidecar> {
     let program = core_executable(root, version);
     if !program.is_file() {
@@ -112,7 +126,7 @@ fn installed_resolution(root: &Path, version: &str, source: &str) -> Option<Reso
     Some(ResolvedSidecar {
         program,
         args: vec![],
-        accelerator_dir: accelerator.is_dir().then_some(accelerator),
+        accelerator_dir: nvidia_runtime_valid(&accelerator).then_some(accelerator),
         source: source.to_string(),
     })
 }
@@ -137,11 +151,14 @@ pub fn resolve_sidecar_command() -> Option<ResolvedSidecar> {
 
     let parsed = manifest().ok()?;
     if let Some(portable_root) = portable_runtime_root() {
-        if let Some(resolved) = installed_resolution(&portable_root, &parsed.runtime_version, "portable") {
+        if let Some(resolved) =
+            installed_resolution(&portable_root, &parsed.runtime_version, "portable")
+        {
             return Some(resolved);
         }
     }
-    if let Some(resolved) = installed_resolution(&runtime_root(), &parsed.runtime_version, "shared") {
+    if let Some(resolved) = installed_resolution(&runtime_root(), &parsed.runtime_version, "shared")
+    {
         return Some(resolved);
     }
 
@@ -151,7 +168,10 @@ pub fn resolve_sidecar_command() -> Option<ResolvedSidecar> {
             let candidates = [
                 parent.join("voxnote-sidecar.exe"),
                 parent.join("voxnote-sidecar").join("voxnote-sidecar.exe"),
-                parent.join("binaries").join("voxnote-sidecar").join("voxnote-sidecar.exe"),
+                parent
+                    .join("binaries")
+                    .join("voxnote-sidecar")
+                    .join("voxnote-sidecar.exe"),
             ];
             if let Some(program) = candidates.into_iter().find(|candidate| candidate.is_file()) {
                 return Some(ResolvedSidecar {
@@ -174,18 +194,23 @@ pub fn get_status(install_state: &Arc<Mutex<RuntimeInstallState>>) -> RuntimeSta
     let portable_core = portable_root
         .as_ref()
         .is_some_and(|root| core_executable(root, &parsed.runtime_version).is_file());
-    let shared_nvidia = nvidia_dir(&shared_root, &parsed.runtime_version).is_dir();
+    let shared_nvidia = nvidia_runtime_valid(&nvidia_dir(&shared_root, &parsed.runtime_version));
     let portable_nvidia = portable_root
         .as_ref()
-        .is_some_and(|root| nvidia_dir(root, &parsed.runtime_version).is_dir());
+        .is_some_and(|root| nvidia_runtime_valid(&nvidia_dir(root, &parsed.runtime_version)));
     let resolved = resolve_sidecar_command();
-    let installing = install_state.lock().map(|state| state.installing).unwrap_or(false);
+    let installing = install_state
+        .lock()
+        .map(|state| state.installing)
+        .unwrap_or(false);
     RuntimeStatus {
         ready: resolved.is_some(),
         core_installed: shared_core || portable_core || cfg!(debug_assertions),
         nvidia_installed: shared_nvidia || portable_nvidia,
         installing,
-        dev_runtime: resolved.as_ref().is_some_and(|value| value.source == "development"),
+        dev_runtime: resolved
+            .as_ref()
+            .is_some_and(|value| value.source == "development"),
         runtime_version: parsed.runtime_version,
         runtime_root: shared_root.to_string_lossy().to_string(),
         executable: resolved
@@ -196,7 +221,10 @@ pub fn get_status(install_state: &Arc<Mutex<RuntimeInstallState>>) -> RuntimeSta
     }
 }
 
-fn package_for(profile: &str, parsed: &RuntimeManifest) -> Result<Vec<(String, RuntimePackage)>, String> {
+fn package_for(
+    profile: &str,
+    parsed: &RuntimeManifest,
+) -> Result<Vec<(String, RuntimePackage)>, String> {
     match profile {
         "cpu" => Ok(vec![("core".to_string(), parsed.packages.core.clone())]),
         "nvidia" => Ok(vec![
@@ -211,7 +239,9 @@ fn valid_package(package: &RuntimePackage) -> bool {
     package.size_bytes > 0
         && package.sha256.len() == 64
         && package.sha256.chars().all(|ch| ch.is_ascii_hexdigit())
-        && package.url.starts_with("https://github.com/wrldwideme/VoxNote/releases/download/")
+        && package
+            .url
+            .starts_with("https://github.com/wrldwideme/VoxNote/releases/download/")
 }
 
 fn target_dir(root: &Path, version: &str, package_name: &str) -> PathBuf {
@@ -251,7 +281,7 @@ fn install_package(
 ) -> Result<(), String> {
     let target = target_dir(root, version, name);
     if (name == "core" && target.join("voxnote-sidecar.exe").is_file())
-        || (name == "nvidia" && target.is_dir())
+        || (name == "nvidia" && nvidia_runtime_valid(&target))
     {
         return Ok(());
     }
@@ -287,7 +317,9 @@ fn install_package(
             if read == 0 {
                 break;
             }
-            output.write_all(&buffer[..read]).map_err(|err| err.to_string())?;
+            output
+                .write_all(&buffer[..read])
+                .map_err(|err| err.to_string())?;
             hasher.update(&buffer[..read]);
             received += read as u64;
             emit_progress(app, name, "downloading", received, total);
@@ -320,10 +352,17 @@ fn install_package(
                 if let Some(parent) = destination.parent() {
                     fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
-                let mut destination_file = File::create(&destination).map_err(|err| err.to_string())?;
+                let mut destination_file =
+                    File::create(&destination).map_err(|err| err.to_string())?;
                 std::io::copy(&mut item, &mut destination_file).map_err(|err| err.to_string())?;
             }
-            emit_progress(app, name, "extracting", (index + 1) as u64, archive_len as u64);
+            emit_progress(
+                app,
+                name,
+                "extracting",
+                (index + 1) as u64,
+                archive_len as u64,
+            );
         }
 
         if name == "core" && !staging.join("voxnote-sidecar.exe").is_file() {
@@ -332,7 +371,8 @@ fn install_package(
         if target.exists() {
             fs::remove_dir_all(&target).map_err(|err| err.to_string())?;
         }
-        fs::rename(&staging, &target).map_err(|err| format!("Не удалось активировать runtime: {err}"))?;
+        fs::rename(&staging, &target)
+            .map_err(|err| format!("Не удалось активировать runtime: {err}"))?;
         emit_progress(app, name, "completed", 1, 1);
         Ok(())
     })();
@@ -423,5 +463,33 @@ mod tests {
         };
 
         assert!(!valid_package(&invalid));
+    }
+
+    #[test]
+    fn nvidia_runtime_requires_core_cuda_dlls() {
+        let root = std::env::temp_dir().join(format!(
+            "voxnote-runtime-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock must be valid")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("temporary runtime directory must be created");
+        assert!(!nvidia_runtime_valid(&root));
+
+        for name in [
+            "cublas64_12.dll",
+            "cublaslt64_12.dll",
+            "cudnn64_9.dll",
+            "cudnn_cnn64_9.dll",
+            "cudnn_graph64_9.dll",
+            "cudnn_ops64_9.dll",
+            "nvrtc64_120_0.dll",
+        ] {
+            File::create(root.join(name)).expect("CUDA runtime marker must be created");
+        }
+        assert!(nvidia_runtime_valid(&root));
+
+        fs::remove_dir_all(root).expect("temporary runtime directory must be removed");
     }
 }

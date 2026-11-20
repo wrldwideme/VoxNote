@@ -2,15 +2,33 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
+from functools import wraps
 from pathlib import Path
+from shutil import copy2
+from threading import RLock
+from typing import ParamSpec, TypeVar, cast
 
 from voxnote.domain.models import HistoryEntry, HistoryRevision, TranscriptSegment
 
 MAX_HISTORY_ENTRIES = 50
 MAX_REVISIONS_PER_ENTRY = 20
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _synchronized(method: Callable[P, R]) -> Callable[P, R]:
+    @wraps(method)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        instance = cast("LocalHistoryStore", args[0])
+        with instance._lock:
+            return method(*args, **kwargs)
+
+    return wrapper
 
 
 class LocalHistoryStore:
@@ -20,7 +38,9 @@ class LocalHistoryStore:
         self._history_file = history_file
         self._max_entries = max_entries
         self._cache: list[HistoryEntry] | None = None
+        self._lock = RLock()
 
+    @_synchronized
     def add_entry(
         self,
         *,
@@ -92,6 +112,7 @@ class LocalHistoryStore:
         # If all entries are user-edited notes, preserve them safely
         return result
 
+    @_synchronized
     def get_entries(self) -> list[HistoryEntry]:
         """Return all recorded sessions ordered from newest to oldest."""
         if self._cache is not None:
@@ -160,9 +181,14 @@ class LocalHistoryStore:
             self._cache = entries
             return list(entries)
         except (OSError, json.JSONDecodeError, ValueError):
+            if self._history_file.is_file():
+                backup = self._history_file.with_suffix(f"{self._history_file.suffix}.corrupt")
+                with suppress(OSError):
+                    copy2(self._history_file, backup)
             self._cache = []
             return []
 
+    @_synchronized
     def get_entry(self, entry_id: str) -> HistoryEntry | None:
         """Find an entry by its unique identifier."""
         for item in self.get_entries():
@@ -170,6 +196,7 @@ class LocalHistoryStore:
                 return item
         return None
 
+    @_synchronized
     def update_entry_text(self, entry_id: str, edited_text: str) -> bool:
         """Update the edited text of a note without modifying the raw original transcript."""
         entries = self.get_entries()
@@ -216,6 +243,7 @@ class LocalHistoryStore:
             self._save(updated)
         return found
 
+    @_synchronized
     def update_entry_title(self, entry_id: str, title: str) -> bool:
         """Update the custom lecture title for an entry."""
         entries = self.get_entries()
@@ -249,6 +277,7 @@ class LocalHistoryStore:
             self._save(updated)
         return found
 
+    @_synchronized
     def update_entry_file_path(self, entry_id: str, file_path: str) -> HistoryEntry | None:
         """Relink a history entry to a user-confirmed local source file."""
         entries = self.get_entries()
@@ -263,6 +292,7 @@ class LocalHistoryStore:
             self._save(updated_entries)
         return updated_entry
 
+    @_synchronized
     def recover_interrupted_entries(self) -> int:
         """Mark checkpoints left by a terminated process as resumable interruptions."""
         entries = self.get_entries()
@@ -277,6 +307,7 @@ class LocalHistoryStore:
             self._save(updated)
         return recovered
 
+    @_synchronized
     def update_transcription(
         self,
         entry_id: str,
@@ -329,6 +360,7 @@ class LocalHistoryStore:
             self._save(updated_entries)
         return updated_entry
 
+    @_synchronized
     def get_grouped_entries(self, search_query: str = "") -> list[tuple[str, list[HistoryEntry]]]:
         """Return history entries grouped by date."""
         all_entries = self.get_entries()
@@ -376,6 +408,7 @@ class LocalHistoryStore:
             groups.append(("Ранее", earlier_items))
         return groups
 
+    @_synchronized
     def remove_entry(self, entry_id: str) -> bool:
         """Remove a single history entry by its ID."""
         entries = self.get_entries()
@@ -385,6 +418,7 @@ class LocalHistoryStore:
         self._save(filtered)
         return True
 
+    @_synchronized
     def clear(self) -> None:
         """Clear all transcription history."""
         self._cache = []

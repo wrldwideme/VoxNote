@@ -2,7 +2,7 @@ from threading import Event
 
 import pytest
 
-from voxnote.application.background import BackgroundTaskRunner
+from voxnote.application.background import BackgroundTaskRunner, CancellationToken
 
 
 def test_background_runner_returns_result() -> None:
@@ -15,7 +15,7 @@ def test_background_runner_signals_cancellation() -> None:
     started = Event()
     release = Event()
 
-    def operation(token) -> bool:  # type: ignore[no-untyped-def]
+    def operation(token: CancellationToken) -> bool:
         started.set()
         release.wait(timeout=1)
         return token.is_cancelled

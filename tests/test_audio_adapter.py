@@ -4,6 +4,7 @@ import math
 import struct
 import wave
 from pathlib import Path
+from typing import Any, cast
 
 import av
 import numpy as np
@@ -29,7 +30,7 @@ def write_encoded_audio(path: Path, codec: str, *, sample_rate: int = 48_000) ->
     time = np.arange(sample_count, dtype=np.float32) / sample_rate
     samples = (np.sin(time * 440 * math.tau) * 12_000).astype(np.int16)[None, :]
     with av.open(str(path), mode="w") as container:
-        stream = container.add_stream(codec, rate=sample_rate)
+        stream = cast(Any, container.add_stream(codec, rate=sample_rate))
         stream.layout = "mono"
         frame = av.AudioFrame.from_ndarray(samples, format="s16", layout="mono")
         frame.sample_rate = sample_rate

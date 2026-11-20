@@ -1,6 +1,7 @@
 # ruff: noqa: RUF001
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from contextlib import suppress
@@ -24,7 +25,7 @@ from voxnote.domain.state import AppState
 from voxnote.services.device import DeviceError
 from voxnote.services.dictionary import LocalDictionaryManager
 from voxnote.services.history import LocalHistoryStore
-from voxnote.services.model_manager import LocalModelManager, ModelDescriptor
+from voxnote.services.model_manager import DownloadStream, LocalModelManager, ModelDescriptor
 from voxnote.services.settings import SettingsStore
 from voxnote.sidecar.protocol import (
     INVALID_PARAMS,
@@ -101,6 +102,10 @@ class FakePreparedService:
                 TranscriptSegment(start=10.0, end=20.0, text="Вторая часть"),
             ),
         )
+
+
+def current_app_state(controller: ApplicationController) -> AppState:
+    return controller.state_machine.state
 
 
 class FakeAudioService:
@@ -322,6 +327,11 @@ def test_sidecar_transcription_full_lifecycle(temp_environment: dict[str, Any]) 
     ]
     completed_events = [e for e in events if e[0] == "transcription_completed"]
     assert len(completed_events) == 1
+    progress_events = [payload for method, payload in events if method == "transcription_progress"]
+    assert [payload["percent"] for payload in progress_events] == [50.0, 99.0, 100.0]
+    assert events.index(("transcription_progress", progress_events[-1])) < events.index(
+        completed_events[0]
+    )
     comp_payload = completed_events[0][1]
     assert comp_payload["text"] == "Тестовая расшифровка лекции"
     assert len(comp_payload["segments"]) == 2
@@ -880,3 +890,81 @@ def test_sidecar_models_directory_configuration(
     assert info_after["is_custom"] is True
     assert info_after["path"] == str(new_custom)
     assert new_custom.is_dir()
+
+
+class FakeSidecarDownloadClient:
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+
+    @staticmethod
+    def _filename(url: str) -> str:
+        return url.split("?", 1)[0].rsplit("/", 1)[1]
+
+    def content_length(self, url: str) -> int:
+        return len(self.files[self._filename(url)])
+
+    def stream(self, url: str, start: int) -> DownloadStream:
+        filename = self._filename(url)
+        data = self.files[filename]
+        chunks = iter((data[start:],))
+        return DownloadStream(total_bytes=len(data), resumed=start > 0, chunks=chunks)
+
+
+def test_sidecar_clean_client_journey_onboarding_to_transcription(tmp_path: Path) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    models_dir = tmp_path / "empty_models"
+    models_dir.mkdir()
+    settings_file = tmp_path / "settings.json"
+    audio_file = tmp_path / "speech.wav"
+    audio_file.write_bytes(b"RIFFdummydataWAVE")
+
+    model_data = b"model_weights"
+    descriptor = ModelDescriptor(
+        model_id="test-model",
+        display_name="Тестовая",
+        summary="Тест",
+        repository="example/model",
+        revision="abc123",
+        files=("config.json", "model.bin"),
+        model_sha256=hashlib.sha256(model_data).hexdigest(),
+        advertised_bytes=len(model_data) + 2,
+    )
+    client = FakeSidecarDownloadClient({"config.json": b"{}", "model.bin": model_data})
+    manager = LocalModelManager(models_dir, catalog=(descriptor,), client=client)
+
+    controller = ApplicationController(SettingsStore(settings_file))
+    service = SidecarService(
+        controller,
+        model_path=None,
+        service_factory=lambda p, pref: FakePreparedService(),
+        model_manager=manager,
+        audio_service=FakeAudioService(),
+        event_sink=lambda m, p: events.append((m, p)),
+    )
+
+    # 1. Startup without model enters ONBOARDING
+    assert current_app_state(controller) is AppState.ONBOARDING
+
+    # 2. User selects/inspects audio before model download
+    service.inspect_audio(str(audio_file))
+    while service._audio_task is not None:
+        sleep(0.01)
+    assert controller.selected_file == audio_file
+    assert current_app_state(controller) is AppState.FILE_SELECTED
+
+    # 3. User downloads model
+    service.download_model("test-model")
+    while service._download_task is not None:
+        sleep(0.01)
+    assert current_app_state(controller) is AppState.FILE_SELECTED
+    assert service._model_path is not None
+
+    # 4. User starts transcription
+    service.start_transcription(file_path=str(audio_file), model_id="test-model")
+    while service._transcription_task is not None:
+        sleep(0.01)
+
+    # 5. Transcription succeeds without any state machine errors
+    completed_events = [e for e in events if e[0] == "transcription_completed"]
+    assert len(completed_events) == 1
+    assert controller.state_machine.state is AppState.COMPLETED

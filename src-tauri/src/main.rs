@@ -30,7 +30,11 @@ struct SidecarStatus {
 }
 
 fn spawn_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
-    if state_arc.lock().map(|state| state.is_running).unwrap_or(false) {
+    if state_arc
+        .lock()
+        .map(|state| state.is_running)
+        .unwrap_or(false)
+    {
         return;
     }
     let Some(ResolvedSidecar {
@@ -44,7 +48,10 @@ fn spawn_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
         let _ = app_handle.emit("runtime-required", true);
         return;
     };
-    eprintln!("[VoxNote Rust Supervisor] Spawning sidecar from {source}: {:?}", program);
+    eprintln!(
+        "[VoxNote Rust Supervisor] Spawning sidecar from {source}: {:?}",
+        program
+    );
 
     let mut cmd = Command::new(&program);
     cmd.args(&args)
@@ -125,14 +132,24 @@ fn spawn_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>) {
             let app_clone = app_handle.clone();
             thread::spawn(move || {
                 let status = child.wait();
-                eprintln!("[VoxNote Rust Supervisor] Sidecar exited with status: {:?}", status);
-                {
+                eprintln!(
+                    "[VoxNote Rust Supervisor] Sidecar exited with status: {:?}",
+                    status
+                );
+                let was_current = {
                     let mut guard = state_clone.lock().unwrap();
-                    guard.is_running = false;
-                    guard.stdin = None;
-                    guard.child_pid = None;
+                    if guard.child_pid == Some(pid) {
+                        guard.is_running = false;
+                        guard.stdin = None;
+                        guard.child_pid = None;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if was_current {
+                    let _ = app_clone.emit("sidecar-status-changed", false);
                 }
-                let _ = app_clone.emit("sidecar-status-changed", false);
             });
         }
         Err(err) => {
@@ -147,7 +164,10 @@ fn restart_sidecar(app_handle: AppHandle, state_arc: Arc<Mutex<SidecarProcess>>)
     let pid_to_kill = {
         let mut guard = state_arc.lock().unwrap();
         if let Some(ref mut stdin) = guard.stdin {
-            let _ = writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"shutdown","id":999999}}"#);
+            let _ = writeln!(
+                stdin,
+                r#"{{"jsonrpc":"2.0","method":"shutdown","id":999999}}"#
+            );
             let _ = stdin.flush();
         }
         guard.stdin = None;
@@ -201,7 +221,10 @@ fn get_runtime_status(state: State<AppState>) -> Result<RuntimeStatus, String> {
 fn install_runtime(app: AppHandle, state: State<AppState>, profile: String) -> Result<(), String> {
     let cancel = Arc::new(AtomicBool::new(false));
     {
-        let mut install = state.runtime_install.lock().map_err(|err| err.to_string())?;
+        let mut install = state
+            .runtime_install
+            .lock()
+            .map_err(|err| err.to_string())?;
         if install.installing {
             return Err("Установка runtime уже выполняется.".to_string());
         }
@@ -233,7 +256,10 @@ fn install_runtime(app: AppHandle, state: State<AppState>, profile: String) -> R
 
 #[tauri::command]
 fn cancel_runtime_install(state: State<AppState>) -> Result<(), String> {
-    let install = state.runtime_install.lock().map_err(|err| err.to_string())?;
+    let install = state
+        .runtime_install
+        .lock()
+        .map_err(|err| err.to_string())?;
     if let Some(cancel) = &install.cancel {
         cancel.store(true, Ordering::Relaxed);
     }
@@ -244,7 +270,10 @@ fn cancel_runtime_install(state: State<AppState>) -> Result<(), String> {
 fn pick_audio_file() -> Result<Option<String>, String> {
     let file = rfd::FileDialog::new()
         .set_title("Выберите аудиозапись для расшифровки")
-        .add_filter("Аудиофайлы (*.m4a, *.mp3, *.wav, *.flac, *.ogg)", &["m4a", "mp3", "wav", "flac", "ogg"])
+        .add_filter(
+            "Аудиофайлы (*.m4a, *.mp3, *.wav, *.flac, *.ogg)",
+            &["m4a", "mp3", "wav", "flac", "ogg"],
+        )
         .pick_file();
     Ok(file.map(|p| p.to_string_lossy().to_string()))
 }
@@ -320,7 +349,10 @@ fn main() {
                 // Terminate sidecar cleanly upon window destruction
                 let mut guard = sidecar_for_exit.lock().unwrap();
                 if let Some(ref mut stdin) = guard.stdin {
-                    let _ = writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"shutdown","id":999999}}"#);
+                    let _ = writeln!(
+                        stdin,
+                        r#"{{"jsonrpc":"2.0","method":"shutdown","id":999999}}"#
+                    );
                     let _ = stdin.flush();
                 }
                 guard.stdin = None;

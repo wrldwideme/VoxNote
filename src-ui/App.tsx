@@ -49,6 +49,19 @@ const formatDeviceLabel = (device: string, fallback = "") => {
   return fallback || device;
 };
 
+const isNewerVersion = (candidate: string, current: string) => {
+  const parse = (value: string) =>
+    value.replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const candidateParts = parse(candidate);
+  const currentParts = parse(current);
+  const length = Math.max(candidateParts.length, currentParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (candidateParts[index] || 0) - (currentParts[index] || 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+};
+
 export function App() {
   const appVersion = "0.2.1";
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
@@ -103,8 +116,11 @@ export function App() {
   const [relinkError, setRelinkError] = useState<string | null>(null);
   const [processingPhase, setProcessingPhase] = useState<ProcessingPhase>("loading_model");
   const [processingRuntime, setProcessingRuntime] = useState<ProcessingRuntime | null>(null);
+  const [canRetryOnCpu, setCanRetryOnCpu] = useState(false);
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
   const isProcessingRef = useRef(false);
+  const isInspectingAudioRef = useRef(false);
+  const isInstallingNvidiaRef = useRef(false);
   const allowNativeCloseRef = useRef(false);
   const closeAfterCancellationRef = useRef(false);
 
@@ -122,6 +138,7 @@ export function App() {
   // Autosave
   const [isAutosaved, setIsAutosaved] = useState(true);
   const debounceTimerRef = useRef<number | null>(null);
+  const historyRequestRef = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const requestNativeClose = async () => {
@@ -149,21 +166,37 @@ export function App() {
 
   useEffect(() => {
     if (!runtimeStatus?.ready || runtimeBootstrappedRef.current) return;
-    runtimeBootstrappedRef.current = true;
-    const timer = window.setTimeout(() => {
-      void loadHistory();
-      void loadModels();
-      void loadDictionaries();
-      sidecarClient.getSystemInfo().then((info) => {
+    let disposed = false;
+    let retryTimer: number | null = null;
+    const bootstrap = async () => {
+      if (disposed) return;
+      runtimeBootstrappedRef.current = true;
+      try {
+        const [, , , info] = await Promise.all([
+          loadHistory(),
+          loadModels(),
+          loadDictionaries(),
+          sidecarClient.getSystemInfo(),
+        ]);
+        if (disposed) return;
         if (!searchParams?.has("theme")) setTheme(info.theme);
         setReduceMotion(info.reduce_motion);
         setDevicePreference(info.device_preference);
-      }).catch(() => {
+      } catch {
         runtimeBootstrappedRef.current = false;
-      });
-    }, runtimeStatus.dev_runtime ? 0 : 350);
-    return () => window.clearTimeout(timer);
-  }, [runtimeStatus?.ready]);
+        if (!disposed) retryTimer = window.setTimeout(() => void bootstrap(), 500);
+      }
+    };
+    const initialTimer = window.setTimeout(
+      () => void bootstrap(),
+      runtimeStatus.dev_runtime ? 0 : 150,
+    );
+    return () => {
+      disposed = true;
+      window.clearTimeout(initialTimer);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, [runtimeStatus]);
 
   const handleRuntimeReady = useCallback((nextStatus: RuntimeStatus) => {
     runtimeBootstrappedRef.current = false;
@@ -183,20 +216,23 @@ export function App() {
         setRuntimeInstallProgress(null);
         runtimeBootstrappedRef.current = false;
         setRuntimeStatus(nextStatus);
-        void sidecarClient
-          .getSystemInfo()
-          .then((info) => {
-            if (!disposed && info.device_capabilities?.cuda_available) {
-              setDevicePreference("auto");
-            }
-          })
-          .catch(() => {});
       }),
       sidecarClient.onRuntimeInstallFailed((err) => {
         if (disposed) return;
         setIsInstallingNvidia(false);
         setRuntimeInstallProgress(null);
         setNvidiaInstallError(err);
+      }),
+      sidecarClient.onSidecarStatusChanged((running) => {
+        if (disposed || running || isInstallingNvidiaRef.current) return;
+        runtimeBootstrappedRef.current = false;
+        if (isProcessingRef.current) {
+          setIsProcessing(false);
+          setIsCancelling(false);
+          setErrorText(
+            "Локальное ядро завершило работу. Частичный результат сохранён и будет доступен после перезапуска VoxNote.",
+          );
+        }
       }),
     ]).then((listeners) => cleanups.push(...listeners));
     return () => {
@@ -206,6 +242,7 @@ export function App() {
   }, []);
 
   const handleInstallNvidia = async () => {
+    if (isProcessingRef.current || isInspectingAudioRef.current) return;
     setIsInstallingNvidia(true);
     setNvidiaInstallError(null);
     try {
@@ -247,6 +284,14 @@ export function App() {
   }, [isProcessing]);
 
   useEffect(() => {
+    isInspectingAudioRef.current = isInspectingAudio;
+  }, [isInspectingAudio]);
+
+  useEffect(() => {
+    isInstallingNvidiaRef.current = isInstallingNvidia;
+  }, [isInstallingNvidia]);
+
+  useEffect(() => {
     const internals = (window as any).__TAURI_INTERNALS__;
     if (!internals || typeof internals.invoke !== "function") return;
     let unlisten: (() => void) | undefined;
@@ -269,7 +314,7 @@ export function App() {
       .then((data) => {
         if (data && data.tag_name) {
           const remoteVer = data.tag_name.replace(/^v/i, "").trim();
-          if (remoteVer && remoteVer !== appVersion) {
+          if (remoteVer && isNewerVersion(remoteVer, appVersion)) {
             setIsUpdateAvailable(true);
           }
         }
@@ -329,6 +374,7 @@ export function App() {
       setIsProcessing(false);
       setIsCancelling(false);
       setErrorText(data.message || "Ошибка во время транскрибации");
+      setCanRetryOnCpu(Boolean(data.recoverable_on_cpu));
       closeAfterCancellationRef.current = false;
     });
 
@@ -388,7 +434,13 @@ export function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
-        handleNewFile();
+        if (
+          !isProcessingRef.current &&
+          !isInspectingAudioRef.current &&
+          !isInstallingNvidiaRef.current
+        ) {
+          handleNewFile();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -396,7 +448,9 @@ export function App() {
   }, []);
 
   const loadHistory = async (query = "") => {
+    const requestId = ++historyRequestRef.current;
     const res = await sidecarClient.getHistory(query);
+    if (requestId !== historyRequestRef.current) return;
     setHistoryGroups(res.groups);
     if (activeWorkspace === "note" && !activeEntry && res.entries.length > 0) {
       setActiveEntry(res.entries[0]);
@@ -419,6 +473,7 @@ export function App() {
   };
 
   const handleSelectLecture = async (id: string) => {
+    if (isProcessing || isInspectingAudio || isInstallingNvidia) return;
     const entry = await sidecarClient.getHistoryEntry(id);
     if (entry) {
       setActiveEntry(entry);
@@ -429,6 +484,7 @@ export function App() {
   };
 
   const handleNewFile = () => {
+    if (isProcessing || isInspectingAudio || isInstallingNvidia) return;
     setActiveWorkspace("new");
     setActiveEntry(null);
     setActiveLectureId("");
@@ -443,6 +499,7 @@ export function App() {
     setProcessingRuntime(null);
     setProcessingPhase("loading_model");
     setErrorText(null);
+    setCanRetryOnCpu(false);
   };
 
   const handleOpenHome = () => {
@@ -495,6 +552,7 @@ export function App() {
   };
 
   const handleDeleteEntry = async (id: string) => {
+    if (isProcessing || isInspectingAudio || isInstallingNvidia) return;
     try {
       await sidecarClient.removeHistoryEntry(id);
       if (activeEntry?.id === id) {
@@ -589,7 +647,7 @@ export function App() {
   const startTranscription = async (
     deviceOverride?: "auto" | "cuda" | "cpu"
   ) => {
-    if (isInspectingAudio) return;
+    if (isInspectingAudio || isInstallingNvidia) return;
     if (!selectedFilePath) {
       const picked = await sidecarClient.pickAudioFile();
       if (picked) {
@@ -610,6 +668,7 @@ export function App() {
     setIsProcessing(true);
     setIsCancelling(false);
     setErrorText(null);
+    setCanRetryOnCpu(false);
     setProgress(null);
     setProcessingPhase("loading_model");
     setProcessingRuntime({
@@ -629,7 +688,12 @@ export function App() {
       );
     } catch (err: any) {
       setIsProcessing(false);
-      setErrorText(err.message || "Не удалось запустить транскрибацию.");
+      const message = err.message || "Не удалось запустить транскрибацию.";
+      setErrorText(message);
+      setCanRetryOnCpu(
+        (deviceOverride ?? devicePreference) !== "cpu" &&
+          /cuda|gpu|видеопамят|nvidia/i.test(message),
+      );
     }
   };
 
@@ -803,17 +867,27 @@ export function App() {
         isNewActive={activeWorkspace === "new"}
         isHomeActive={activeWorkspace === "home"}
         homeDisabled={isProcessing || isInspectingAudio}
+        actionsDisabled={isProcessing || isInspectingAudio || isInstallingNvidia}
         onSearchChange={(q) => {
+          if (isProcessing || isInspectingAudio || isInstallingNvidia) return;
           setSearchQuery(q);
           loadHistory(q);
         }}
         onSelectLecture={handleSelectLecture}
         onNewFile={handleNewFile}
         onOpenHome={handleOpenHome}
-        onOpenSettings={() => setIsPreferencesOpen(true)}
+        onOpenSettings={() => {
+          if (!isProcessing && !isInspectingAudio && !isInstallingNvidia) {
+            setIsPreferencesOpen(true);
+          }
+        }}
         onOpenOnboarding={() => setIsOnboardingOpen(true)}
         onDeleteEntry={handleDeleteEntry}
-        onOpenUpdates={() => setIsUpdateOpen(true)}
+        onOpenUpdates={() => {
+          if (!isProcessing && !isInspectingAudio && !isInstallingNvidia) {
+            setIsUpdateOpen(true);
+          }
+        }}
         isUpdateAvailable={isUpdateAvailable}
         searchInputRef={searchInputRef}
       />
@@ -875,6 +949,7 @@ export function App() {
                 processingRuntime?.deviceLabel || formatDeviceLabel(devicePreference)
               }
               error={errorText}
+              canRetryOnCpu={canRetryOnCpu}
               onFileSelected={handleFileSelected}
               onStartTranscription={handleStartTranscription}
               onCancelTranscription={handleCancelTranscription}

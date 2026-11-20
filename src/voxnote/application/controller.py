@@ -27,18 +27,23 @@ class ApplicationController:
         self.state_machine.transition(target)
 
     def finish_onboarding(self, *, model_available: bool) -> None:
-        target = AppState.IDLE if model_available else AppState.MODEL_REQUIRED
+        if model_available and self.selected_file is not None:
+            target = AppState.FILE_SELECTED
+        else:
+            target = AppState.IDLE if model_available else AppState.MODEL_REQUIRED
         self.state_machine.transition(target)
 
     def select_file(self, path: Path) -> None:
         if self.state_machine.state not in {
             AppState.IDLE,
             AppState.FILE_SELECTED,
+            AppState.ONBOARDING,
+            AppState.MODEL_REQUIRED,
             AppState.COMPLETED,
             AppState.CANCELLED,
             AppState.ERROR,
         }:
-            raise RuntimeError("A file cannot be selected in the current application state")
+            raise RuntimeError("Файл не может быть выбран в текущем состоянии приложения.")
         self.selected_file = path
         self.state_machine.transition(AppState.FILE_SELECTED)
 

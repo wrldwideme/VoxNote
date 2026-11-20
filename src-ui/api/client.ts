@@ -202,22 +202,33 @@ export class SidecarClient {
   private pendingRequests = new Map<number, { resolve: (res: any) => void; reject: (err: any) => void }>();
   private readonly isTauri: boolean;
   private tauriInitialized = false;
+  private tauriInitialization: Promise<void> | null = null;
 
   constructor(private readonly bridge: RpcBridge | null = createDefaultBridge()) {
     this.isTauri = bridge !== null;
     if (this.isTauri) {
-      this.initTauriIpc();
+      void this.initTauriIpc().catch(() => {
+        // The first real RPC call will retry initialization and surface the error.
+      });
     }
   }
 
   private async initTauriIpc(): Promise<void> {
     if (this.tauriInitialized) return;
-    try {
-      await this.bridge?.listen((message) => this.handleIncomingRawMessage(message));
-      this.tauriInitialized = true;
-    } catch (e) {
-      console.warn("[SidecarClient] Tauri IPC initialization fallback:", e);
+    if (!this.tauriInitialization) {
+      this.tauriInitialization = (async () => {
+        try {
+          await this.bridge?.listen((message) => this.handleIncomingRawMessage(message));
+          this.tauriInitialized = true;
+        } catch (error) {
+          console.warn("[SidecarClient] Tauri IPC initialization failed:", error);
+          throw error;
+        } finally {
+          this.tauriInitialization = null;
+        }
+      })();
     }
+    await this.tauriInitialization;
   }
 
   private handleIncomingRawMessage(rawPayload: string): void {
@@ -575,6 +586,12 @@ export class SidecarClient {
     if (!this.isTauri) return () => {};
     const { listen } = await import("@tauri-apps/api/event");
     return listen<string>("runtime-install-failed", (event) => callback(event.payload));
+  }
+
+  public async onSidecarStatusChanged(callback: (running: boolean) => void): Promise<() => void> {
+    if (!this.isTauri) return () => {};
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<boolean>("sidecar-status-changed", (event) => callback(event.payload));
   }
 
   // Mock Fallback Helpers

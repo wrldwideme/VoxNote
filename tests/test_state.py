@@ -38,3 +38,14 @@ def test_listener_receives_state_changes_and_can_unsubscribe() -> None:
     machine.transition(AppState.IDLE)
 
     assert changes == [(AppState.IDLE, AppState.FILE_SELECTED)]
+
+
+def test_onboarding_and_model_required_transitions() -> None:
+    machine = AppStateMachine(AppState.ONBOARDING)
+    assert machine.can_transition(AppState.FILE_SELECTED)
+    assert machine.can_transition(AppState.IDLE)
+    assert machine.can_transition(AppState.MODEL_REQUIRED)
+
+    machine.transition(AppState.MODEL_REQUIRED)
+    assert machine.can_transition(AppState.IDLE)
+    assert machine.can_transition(AppState.FILE_SELECTED)

@@ -399,11 +399,24 @@ class SidecarService:
                 raise SidecarServiceError(FILE_ERROR, f"Аудиофайл не найден: {file_path}")
             if path.suffix.lower() not in SUPPORTED_AUDIO_SUFFIXES:
                 raise SidecarServiceError(FILE_ERROR, "Неподдерживаемый аудиоформат.")
-            self._controller.select_file(path)
+            try:
+                self._controller.select_file(path)
+            except RuntimeError as err:
+                raise SidecarServiceError(
+                    BUSY_ERROR, "Невозможно выбрать файл в текущем состоянии приложения."
+                ) from err
 
         source = self._controller.selected_file
         if source is None or not source.is_file():
             raise SidecarServiceError(FILE_ERROR, "Выберите аудиофайл перед запуском.")
+
+        if self._controller.state_machine.state is not AppState.FILE_SELECTED:
+            try:
+                self._controller.select_file(source)
+            except RuntimeError as err:
+                raise SidecarServiceError(
+                    BUSY_ERROR, "Невозможно выбрать файл в текущем состоянии приложения."
+                ) from err
 
         model_path = self._model_path
         if model_path is None:
@@ -549,14 +562,20 @@ class SidecarService:
                     if not update.notify_ui and snapshot.percent != 100.0:
                         return
                     normalized = update.snapshot
+                    confirmed_percent = normalized.percent
+                    display_percent = (
+                        min(confirmed_percent, 99.0) if confirmed_percent is not None else None
+                    )
                     self._emit(
                         "transcription_progress",
                         {
                             "processed_seconds": normalized.processed_seconds,
                             "total_seconds": normalized.total_seconds,
                             "elapsed_seconds": normalized.elapsed_seconds,
-                            "percent": normalized.percent,
-                            "remaining_percent": normalized.remaining_percent,
+                            "percent": display_percent,
+                            "remaining_percent": (
+                                100.0 - display_percent if display_percent is not None else None
+                            ),
                             "eta_seconds": normalized.eta_seconds,
                             "eta_formatted": self._format_duration(normalized.eta_seconds),
                         },
@@ -636,17 +655,6 @@ class SidecarService:
                     return result
 
                 self._controller.state_machine.transition(AppState.FINALIZING)
-                self._controller.state_machine.transition(AppState.COMPLETED)
-                self._record_diagnostic(
-                    "transcription_completed",
-                    elapsed_ms=(
-                        round((monotonic() - self._transcription_started_at) * 1000)
-                        if self._transcription_started_at is not None
-                        else None
-                    ),
-                    device=result.device,
-                    result="success",
-                )
 
                 # Record in history store
                 entry_dict: dict[str, Any] = {}
@@ -678,6 +686,36 @@ class SidecarService:
                         )
                     if saved_entry is not None:
                         entry_dict = self._serialize_history_entry(saved_entry)
+
+                self._controller.state_machine.transition(AppState.COMPLETED)
+                completed_elapsed = (
+                    monotonic() - self._transcription_started_at
+                    if self._transcription_started_at is not None
+                    else 0.0
+                )
+                completed_total = (
+                    self._audio_metadata.duration_seconds
+                    if self._audio_metadata is not None
+                    else (result.segments[-1].end if result.segments else None)
+                )
+                self._emit(
+                    "transcription_progress",
+                    {
+                        "processed_seconds": completed_total,
+                        "total_seconds": completed_total,
+                        "elapsed_seconds": completed_elapsed,
+                        "percent": 100.0,
+                        "remaining_percent": 0.0,
+                        "eta_seconds": 0.0,
+                        "eta_formatted": "0:00",
+                    },
+                )
+                self._record_diagnostic(
+                    "transcription_completed",
+                    elapsed_ms=round(completed_elapsed * 1000),
+                    device=result.device,
+                    result="success",
+                )
 
                 self._emit(
                     "transcription_completed",
@@ -834,6 +872,11 @@ class SidecarService:
             )
         self._controller.update_settings(selected_model=model_id)
         self._model_path = self._model_manager.model_path(model_id)
+        if self._controller.state_machine.state in {
+            AppState.ONBOARDING,
+            AppState.MODEL_REQUIRED,
+        }:
+            self._controller.finish_onboarding(model_available=True)
         return {"status": "selected", "model_id": model_id}
 
     def download_model(self, model_id: str) -> dict[str, Any]:
@@ -882,6 +925,11 @@ class SidecarService:
             if path is not None and isinstance(path, Path):
                 self._controller.update_settings(selected_model=model_id)
                 self._model_path = path
+                if self._controller.state_machine.state in {
+                    AppState.ONBOARDING,
+                    AppState.MODEL_REQUIRED,
+                }:
+                    self._controller.finish_onboarding(model_available=True)
                 self._emit(
                     "model_download_finished",
                     {
@@ -909,6 +957,14 @@ class SidecarService:
         self._model_manager.remove(model_id)
         if self._controller.settings.selected_model == model_id:
             self._model_path = self._selected_installed_path()
+        if self._model_path is None and self._controller.state_machine.state in {
+            AppState.IDLE,
+            AppState.FILE_SELECTED,
+            AppState.COMPLETED,
+            AppState.CANCELLED,
+            AppState.ERROR,
+        }:
+            self._controller.state_machine.transition(AppState.MODEL_REQUIRED)
         return {"status": "removed", "model_id": model_id}
 
     # --------------------------------------------------------------------------

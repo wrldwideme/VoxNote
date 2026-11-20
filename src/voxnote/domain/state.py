@@ -24,10 +24,22 @@ _ALLOWED_TRANSITIONS: dict[AppState, frozenset[AppState]] = {
         {AppState.ONBOARDING, AppState.MODEL_REQUIRED, AppState.IDLE, AppState.ERROR}
     ),
     AppState.ONBOARDING: frozenset(
-        {AppState.MODEL_REQUIRED, AppState.LOADING_MODEL, AppState.IDLE, AppState.ERROR}
+        {
+            AppState.MODEL_REQUIRED,
+            AppState.LOADING_MODEL,
+            AppState.IDLE,
+            AppState.FILE_SELECTED,
+            AppState.ERROR,
+        }
     ),
     AppState.MODEL_REQUIRED: frozenset(
-        {AppState.LOADING_MODEL, AppState.ONBOARDING, AppState.ERROR}
+        {
+            AppState.LOADING_MODEL,
+            AppState.ONBOARDING,
+            AppState.IDLE,
+            AppState.FILE_SELECTED,
+            AppState.ERROR,
+        }
     ),
     AppState.IDLE: frozenset(
         {AppState.FILE_SELECTED, AppState.MODEL_REQUIRED, AppState.COMPLETED, AppState.ERROR}

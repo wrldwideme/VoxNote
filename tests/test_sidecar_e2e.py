@@ -5,6 +5,7 @@ import subprocess
 import sys
 import wave
 from pathlib import Path
+from typing import Any, cast
 
 
 def write_test_wav(path: Path, *, duration: float = 0.5, sample_rate: int = 16_000) -> None:
@@ -36,14 +37,16 @@ def test_sidecar_process_e2e(tmp_path: Path) -> None:
     try:
         assert proc.stdin is not None
         assert proc.stdout is not None
+        stdin = proc.stdin
+        stdout = proc.stdout
 
-        def send_and_receive(request_dict: dict) -> dict:
+        def send_and_receive(request_dict: dict[str, Any]) -> dict[str, Any]:
             line = json.dumps(request_dict, ensure_ascii=False)
-            proc.stdin.write(line + "\n")
-            proc.stdin.flush()
-            out_line = proc.stdout.readline()
+            stdin.write(line + "\n")
+            stdin.flush()
+            out_line = stdout.readline()
             assert out_line, "Expected JSON-RPC response from sidecar stdout"
-            return json.loads(out_line)
+            return cast(dict[str, Any], json.loads(out_line))
 
         # 1. Ping
         res = send_and_receive({"jsonrpc": "2.0", "id": 1, "method": "ping"})
@@ -93,8 +96,8 @@ def test_sidecar_process_e2e(tmp_path: Path) -> None:
         # Read streaming notifications until audio_inspected is received
         audio_meta = None
         for _ in range(5):
-            notification_line = proc.stdout.readline()
-            notification = json.loads(notification_line)
+            notification_line = stdout.readline()
+            notification = cast(dict[str, Any], json.loads(notification_line))
             if notification.get("method") == "audio_inspected":
                 audio_meta = notification["params"]
                 break

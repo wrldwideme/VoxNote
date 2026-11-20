@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from voxnote.infrastructure.nvidia_runtime import register_nvidia_dll_directories
 
 
@@ -26,7 +28,7 @@ def test_registers_existing_nvidia_dll_directories(tmp_path: Path) -> None:
         assert handles == []
 
 
-def test_discover_nvidia_dll_directories_handles_missing_packages(monkeypatch) -> None:
+def test_discover_nvidia_dll_directories_handles_missing_packages() -> None:
     from voxnote.infrastructure.nvidia_runtime import discover_nvidia_dll_directories
 
     # Should safely return a tuple without raising ModuleNotFoundError or ImportError
@@ -34,7 +36,9 @@ def test_discover_nvidia_dll_directories_handles_missing_packages(monkeypatch) -
     assert isinstance(directories, tuple)
 
 
-def test_discovers_shared_accelerator_directory_first(tmp_path: Path, monkeypatch) -> None:
+def test_discovers_shared_accelerator_directory_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from voxnote.infrastructure.nvidia_runtime import discover_nvidia_dll_directories
 
     accelerator = tmp_path / "runtime" / "nvidia-1.0.0"
