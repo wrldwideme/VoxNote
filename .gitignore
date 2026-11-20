@@ -28,7 +28,9 @@ dist/
 
 # Editors and OS
 .idea/
-.vscode/
+!.vscode/
+.vscode/*
+!.vscode/settings.json
 *.swp
 Thumbs.db
 Desktop.ini
@@ -37,7 +39,7 @@ Desktop.ini
 models/
 downloads/
 logs/
-settings.json
+/settings.json
 *.transcript.txt
 *.partial.txt
 

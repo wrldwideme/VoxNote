@@ -68,6 +68,7 @@ export function App() {
   const initialTheme = (searchParams?.get("theme") as ThemeMode) || "light";
   const initialView = (searchParams?.get("view") as "home" | "note" | "new") || "home";
   const initialModal = searchParams?.get("modal");
+  const documentationPreview = searchParams?.get("preview") === "documentation";
 
   const [theme, setTheme] = useState<ThemeMode>(initialTheme);
   const [activeWorkspace, setActiveWorkspace] = useState<"home" | "note" | "new">(initialView);
@@ -92,7 +93,9 @@ export function App() {
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(
     initialModal === "onboarding" ||
-      (typeof window !== "undefined" && !localStorage.getItem("voxnote_onboarding_seen"))
+      (!documentationPreview &&
+        typeof window !== "undefined" &&
+        !localStorage.getItem("voxnote_onboarding_seen"))
   );
   const [reduceMotion, setReduceMotion] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);

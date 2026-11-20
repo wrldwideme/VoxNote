@@ -103,6 +103,7 @@ describe("VoxNote application smoke flows", () => {
       configurable: true,
       value: { convertFileSrc: (path: string) => path },
     });
+    window.history.replaceState({}, "", "/");
     fakeClient.listeners.clear();
     fakeWindowApi.closeRequestedHandler = null;
     fakeWindowApi.close.mockClear();
@@ -347,6 +348,16 @@ describe("VoxNote application smoke flows", () => {
     await waitFor(() => expect(fakeClient.getSystemInfo).toHaveBeenCalledTimes(2), {
       timeout: 2000,
     });
+  });
+
+  it("opens the documentation preview without first-run onboarding", async () => {
+    localStorage.removeItem("voxnote_onboarding_seen");
+    window.history.replaceState({}, "", "/?preview=documentation");
+
+    render(<App />);
+
+    expect(await screen.findByText("Превратите запись в текст,")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Как устроен VoxNote" })).not.toBeInTheDocument();
   });
 
   it("persists the reduced-motion preference from settings", async () => {
