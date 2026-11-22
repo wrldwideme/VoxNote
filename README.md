@@ -8,12 +8,12 @@
 
 VoxNote превращает русскоязычные лекции, встречи и голосовые заметки в аккуратный текст на вашем Windows-компьютере. Аудио, словари и расшифровки не отправляются в облако.
 
-[![Release](https://img.shields.io/badge/release-v0.2.3-6F8F72?style=flat-square&logo=github)](https://github.com/wrldwideme/VoxNote/releases/tag/v0.2.3)
+[![Release](https://img.shields.io/badge/release-v0.2.4-6F8F72?style=flat-square&logo=github)](https://github.com/wrldwideme/VoxNote/releases/tag/v0.2.4)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-6F8F72?style=flat-square&logo=windows)](https://github.com/wrldwideme/VoxNote/releases/latest)
 [![Offline](https://img.shields.io/badge/privacy-100%25%20offline-6F8F72?style=flat-square&logo=shield)](docs/privacy.md)
 [![MIT](https://img.shields.io/badge/license-MIT-D8CDBF?style=flat-square)](LICENSE)
 
-### [Скачать VoxNote для Windows](https://github.com/wrldwideme/VoxNote/releases/download/v0.2.3/VoxNote_0.2.3_x64-slim-setup.exe)
+### [Скачать VoxNote для Windows](https://github.com/wrldwideme/VoxNote/releases/download/v0.2.4/VoxNote_0.2.4_x64-slim-setup.exe)
 
 Один лёгкий установщик · 6,1 МБ · Windows 10/11 x64
 
@@ -57,7 +57,7 @@ VoxNote превращает русскоязычные лекции, встре
 
 ## Установка
 
-1. Скачайте [VoxNote_0.2.3_x64-slim-setup.exe](https://github.com/wrldwideme/VoxNote/releases/download/v0.2.3/VoxNote_0.2.3_x64-slim-setup.exe).
+1. Скачайте [VoxNote_0.2.4_x64-slim-setup.exe](https://github.com/wrldwideme/VoxNote/releases/download/v0.2.4/VoxNote_0.2.4_x64-slim-setup.exe).
 2. При первом запуске выберите базовый CPU-движок или вариант с ускорением NVIDIA.
 3. Выберите модель распознавания — быструю, сбалансированную или максимально точную.
 4. Перетащите аудиофайл и начните транскрибацию.
@@ -66,9 +66,7 @@ Runtime и модели загружаются только после ваше�
 
 ### SHA-256 установщика
 
-```text
-a09c1177d2cebcff4a4d4bc18a17dab88d9b0856499aff2b9cc03938dcc8c7e8  VoxNote_0.2.3_x64-slim-setup.exe
-```
+Контрольная сумма SHA-256 установщика публикуется в [релизе v0.2.4](https://github.com/wrldwideme/VoxNote/releases/tag/v0.2.4).
 
 ## Системные требования
 
@@ -146,7 +144,7 @@ ML-runtime имеет независимую версию и пересобир�
 - [Продуктовая спецификация](PROJECT_SPEC.md)
 - [План реализации](IMPLEMENTATION_PLAN.md)
 - [История изменений](CHANGELOG.md)
-- [Примечания к v0.2.3](docs/releases/v0.2.3.md)
+- [Примечания к v0.2.4](docs/releases/v0.2.4.md)
 - [Приватность](docs/privacy.md)
 - [Модели и NVIDIA GPU](docs/gpu-setup.md)
 - [Словари](docs/dictionaries.md)
