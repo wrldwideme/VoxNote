@@ -200,7 +200,7 @@ export class SidecarClient {
   // IPC Protocol state
   private nextRequestId = 1;
   private pendingRequests = new Map<number, { resolve: (res: any) => void; reject: (err: any) => void }>();
-  private readonly isTauri: boolean;
+  public readonly isTauri: boolean;
   private tauriInitialized = false;
   private tauriInitialization: Promise<void> | null = null;
 
@@ -502,6 +502,18 @@ export class SidecarClient {
     if (this.isTauri) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke<string | null>("pick_dictionary_file");
+    }
+    return null;
+  }
+
+  public async pickSaveFile(defaultFilename: string, filterName: string, extension: string): Promise<string | null> {
+    if (this.isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return invoke<string | null>("pick_save_file", {
+        defaultFilename,
+        filterName,
+        extension,
+      });
     }
     return null;
   }

@@ -10,7 +10,7 @@ export interface RightPanelProps {
   audioPath?: string;
   waveform?: number[];
   onCopyText: () => void;
-  onExportText: (format: "txt" | "markdown") => void;
+  onExportText: (format: "txt" | "markdown") => void | boolean | Promise<void | boolean>;
   isAutosaved: boolean;
   isEditingMode: boolean;
   onToggleEditingMode: (isEditing: boolean) => void;
@@ -38,6 +38,16 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number | null>(null);
   const [isCopied, setIsCopied] = useState(false);
+  const [isExported, setIsExported] = useState(false);
+
+  const handleExport = async (format: "txt" | "markdown") => {
+    setIsExportMenuOpen(false);
+    const result = await onExportText(format);
+    if (result !== false) {
+      setIsExported(true);
+      setTimeout(() => setIsExported(false), 2000);
+    }
+  };
   const [playerSeekTime, setPlayerSeekTime] = useState<number | null>(null);
 
   const handleCopy = () => {
@@ -62,11 +72,13 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           <div className="relative">
             <button
               onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
-              className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-brand-primary hover:bg-brand-primary-hover active:bg-[#3C563F] text-white text-xs font-semibold shadow-subtle transition-all cursor-pointer"
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl text-white text-xs font-semibold shadow-subtle transition-all cursor-pointer ${
+                isExported ? "bg-emerald-600 dark:bg-emerald-700" : "bg-brand-primary hover:bg-brand-primary-hover active:bg-[#3C563F]"
+              }`}
             >
               <div className="flex items-center gap-2">
-                <Download size={15} />
-                <span>Экспортировать</span>
+                {isExported ? <Check size={15} /> : <Download size={15} />}
+                <span>{isExported ? "Экспортировано!" : "Экспортировать"}</span>
               </div>
               <ChevronDown size={14} className="opacity-80" />
             </button>
@@ -74,19 +86,13 @@ export const RightPanel: React.FC<RightPanelProps> = ({
             {isExportMenuOpen && (
               <div className="absolute top-full left-0 right-0 mt-1.5 p-1.5 bg-brand-surface dark:bg-dark-surface border border-brand-border dark:border-dark-border rounded-xl shadow-card z-30 space-y-0.5 animate-in fade-in duration-150">
                 <button
-                  onClick={() => {
-                    onExportText("txt");
-                    setIsExportMenuOpen(false);
-                  }}
+                  onClick={() => void handleExport("txt")}
                   className="w-full text-left px-3 py-2 rounded-lg text-xs text-brand-text dark:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer font-medium transition-colors"
                 >
                   Обычный текст (.txt)
                 </button>
                 <button
-                  onClick={() => {
-                    onExportText("markdown");
-                    setIsExportMenuOpen(false);
-                  }}
+                  onClick={() => void handleExport("markdown")}
                   className="w-full text-left px-3 py-2 rounded-lg text-xs text-brand-text dark:text-dark-text hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer font-medium transition-colors"
                 >
                   Документ Markdown (.md)

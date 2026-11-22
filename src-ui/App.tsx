@@ -574,17 +574,45 @@ export function App() {
     await navigator.clipboard.writeText(activeEntry.current_text);
   };
 
-  const handleExportText = async (format: "txt" | "markdown") => {
-    if (!activeEntry) return;
-    const extension = format === "txt" ? ".txt" : ".md";
-    const filename = `${activeEntry.display_title.replace(/[\/\\:*?"<>|]/g, "_")}${extension}`;
-    const blob = new Blob([activeEntry.current_text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportText = async (format: "txt" | "markdown"): Promise<boolean> => {
+    if (!activeEntry) return false;
+    const extension = format === "txt" ? "txt" : "md";
+    const filterName = format === "txt" ? "Текстовые файлы (*.txt)" : "Документы Markdown (*.md)";
+    const defaultFilename = `${activeEntry.display_title.replace(/[\/\\:*?"<>|]/g, "_")}.${extension}`;
+
+    try {
+      if (sidecarClient.isTauri) {
+        const selectedPath = await sidecarClient.pickSaveFile(defaultFilename, filterName, extension);
+        if (!selectedPath) return false;
+
+        let targetPath = selectedPath;
+        if (!targetPath.toLowerCase().endsWith(`.${extension.toLowerCase()}`)) {
+          targetPath += `.${extension}`;
+        }
+
+        // Flush any pending text autosave before exporting
+        if (debounceTimerRef.current) {
+          window.clearTimeout(debounceTimerRef.current);
+          debounceTimerRef.current = null;
+          await sidecarClient.updateHistoryEntry(activeEntry.id, undefined, activeEntry.current_text);
+        }
+
+        await sidecarClient.exportText(activeEntry.id, targetPath);
+        return true;
+      } else {
+        const blob = new Blob([activeEntry.current_text], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = defaultFilename;
+        a.click();
+        URL.revokeObjectURL(url);
+        return true;
+      }
+    } catch (err: any) {
+      alert(`Ошибка экспорта: ${err.message || err}`);
+      return false;
+    }
   };
 
   const handleToggleTheme = () => {

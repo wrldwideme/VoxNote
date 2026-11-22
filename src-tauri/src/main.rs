@@ -288,6 +288,26 @@ fn pick_dictionary_file() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn pick_save_file(
+    default_filename: String,
+    filter_name: String,
+    extension: String,
+) -> Result<Option<String>, String> {
+    let file = rfd::FileDialog::new()
+        .set_title("Экспорт заметки")
+        .set_file_name(&default_filename)
+        .add_filter(&filter_name, &[&extension])
+        .save_file();
+    Ok(file.map(|mut p| {
+        let ext_with_dot = format!(".{}", extension);
+        if !p.to_string_lossy().to_lowercase().ends_with(&ext_with_dot.to_lowercase()) {
+            p.set_extension(&extension);
+        }
+        p.to_string_lossy().to_string()
+    }))
+}
+
+#[tauri::command]
 fn minimize_window(window: Window) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
 }
@@ -334,6 +354,7 @@ fn main() {
             cancel_runtime_install,
             pick_audio_file,
             pick_dictionary_file,
+            pick_save_file,
             minimize_window,
             maximize_window,
             close_window,

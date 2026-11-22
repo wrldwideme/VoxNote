@@ -7,6 +7,7 @@ type Listener = (payload: any) => void;
 const fakeClient = vi.hoisted(() => {
   const listeners = new Map<string, Set<Listener>>();
   return {
+    isTauri: true,
     listeners,
     emit(event: string, payload: any) {
       listeners.get(event)?.forEach((listener) => listener(payload));
@@ -38,6 +39,7 @@ const fakeClient = vi.hoisted(() => {
     importCustomDictionary: vi.fn(),
     removeCustomDictionary: vi.fn(),
     exportText: vi.fn(),
+    pickSaveFile: vi.fn(),
     pickDictionaryFile: vi.fn(),
     openExternalUrl: vi.fn(),
     minimizeWindow: vi.fn(),
@@ -394,5 +396,47 @@ describe("VoxNote application smoke flows", () => {
     await user.click(installButton);
 
     expect(fakeClient.installRuntime).toHaveBeenCalledWith("nvidia");
+  });
+
+  it("exports note text via native save dialog when in Tauri mode", async () => {
+    const entry = {
+      id: "entry-1",
+      display_title: "Адренорецепторы",
+      current_text: "Текст лекции про рецепторы",
+      text: "Текст лекции про рецепторы",
+      file_path: "C:\\audio\\lecture.wav",
+      file_available: true,
+      duration_formatted: "10:00",
+      has_edits: false,
+      revisions: [],
+      segments: [],
+    };
+    fakeClient.getHistory.mockResolvedValueOnce({
+      entries: [entry],
+      groups: [{ label: "Сегодня", entries: [entry] }],
+      total_count: 1,
+    });
+    fakeClient.getHistoryEntry.mockResolvedValueOnce(entry);
+    fakeClient.isTauri = true;
+    fakeClient.pickSaveFile.mockResolvedValueOnce("C:\\Users\\test\\Desktop\\Адренорецепторы.txt");
+    fakeClient.exportText.mockResolvedValueOnce({ status: "exported", path: "C:\\Users\\test\\Desktop\\Адренорецепторы.txt" });
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    const [sidebarItem] = await screen.findAllByText("Адренорецепторы");
+    await user.click(sidebarItem);
+    await user.click(screen.getByRole("button", { name: /Экспортировать/ }));
+    await user.click(screen.getByText("Обычный текст (.txt)"));
+
+    expect(fakeClient.pickSaveFile).toHaveBeenCalledWith(
+      "Адренорецепторы.txt",
+      "Текстовые файлы (*.txt)",
+      "txt"
+    );
+    expect(fakeClient.exportText).toHaveBeenCalledWith(
+      "entry-1",
+      "C:\\Users\\test\\Desktop\\Адренорецепторы.txt"
+    );
   });
 });
