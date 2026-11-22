@@ -66,7 +66,9 @@ Runtime и модели загружаются только после ваше�
 
 ### SHA-256 установщика
 
-Контрольная сумма SHA-256 установщика публикуется в [релизе v0.2.4](https://github.com/wrldwideme/VoxNote/releases/tag/v0.2.4).
+```text
+30fa62e8565ad20caea1e203c2906b296896decb4b11b8569d5f882208fbe7a3  VoxNote_0.2.4_x64-slim-setup.exe
+```
 
 ## Системные требования
 
