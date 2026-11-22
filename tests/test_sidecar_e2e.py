@@ -52,7 +52,7 @@ def test_sidecar_process_e2e(tmp_path: Path) -> None:
         res = send_and_receive({"jsonrpc": "2.0", "id": 1, "method": "ping"})
         assert res["id"] == 1
         assert res["result"]["status"] == "pong"
-        assert "0.2.2" in res["result"]["version"]
+        assert "0.2.3" in res["result"]["version"]
 
         # 2. Get system info
         res = send_and_receive({"jsonrpc": "2.0", "id": 2, "method": "get_system_info"})
